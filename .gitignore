@@ -1,0 +1,49 @@
+# ignora variables sensibles
+.env
+*.env.local
+# === Node ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# === Env Files ===
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+
+# === Next.js ===
+.next/
+out/
+dist/
+
+# === System ===
+.DS_Store
+Thumbs.db
+
+# === Logs ===
+logs/
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# === TypeScript ===
+*.tsbuildinfo
+
+# === Build cache ===
+.cache/
+.next/cache/
+
+# === VSCode ===
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# === Misc ===
+*.swp
+*.swo
+*.idea/
