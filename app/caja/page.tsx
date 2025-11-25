@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Quantity from '@/components/Quantity';
-
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 type ItemKind =
   | 'pollo'
   | 'medio_pollo'
@@ -335,6 +335,7 @@ export default function Caja() {
   }
 
   return (
+    <ProtectedRoute allowedRoles={['caja', 'admin']}>
     <main className="grid gap-4">
       {/* Registro rápido */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -574,5 +575,6 @@ export default function Caja() {
         )}
       </section>
     </main>
+    </ProtectedRoute>
   );
 }

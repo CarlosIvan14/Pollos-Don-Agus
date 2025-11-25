@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 type Totales = { total:number; pedidos:number; domicilio:number; pickup:number; tortillas:number }
 type ItemRow = { _id:string; cantidad:number; ingreso:number }
 
@@ -21,6 +21,7 @@ export default function CortePage(){
   useEffect(()=>{ load(); }, [])
 
   return (
+    <ProtectedRoute allowedRoles={['caja', 'admin']}>
     <main className="grid gap-4">
       <div className="card flex items-center justify-between">
         <div>
@@ -78,5 +79,6 @@ export default function CortePage(){
         </>
       )}
     </main>
+    </ProtectedRoute>
   )
 }

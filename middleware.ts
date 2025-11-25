@@ -1,17 +1,30 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+// middleware.ts
+import { withAuth } from 'next-auth/middleware';
 
-export function middleware(req: NextRequest) {
-  const token = req.cookies.get('session')?.value;
-  const isProtected = ['/caja', '/admin', '/corte'].some(p => req.nextUrl.pathname.startsWith(p));
-  if (isProtected && !token) {
-    const url = req.nextUrl.clone();
-    url.pathname = '/login';
-    return NextResponse.redirect(url);
-  }
-  return NextResponse.next();
-}
+export default withAuth({
+  callbacks: {
+    authorized({ token }) {
+      // Sin token -> NO autorizado
+      if (!token) return false;
 
+      const role = (token as any).role ?? 'none';
+
+      // Solo admin o caja pueden pasar a las rutas protegidas
+      if (role === 'admin' || role === 'caja') {
+        return true;
+      }
+
+      // Rol "none" u otro -> NO autorizado
+      return false;
+    },
+  },
+});
+
+// Muy importante: NO incluir /login aquí
 export const config = {
-  matcher: ['/caja/:path*', '/admin/:path*', '/corte/:path*'],
+  matcher: [
+    '/admin/:path*',
+    '/caja/:path*',
+    '/corte/:path*',
+  ],
 };

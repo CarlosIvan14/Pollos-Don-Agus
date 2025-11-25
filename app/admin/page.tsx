@@ -2,7 +2,7 @@
 
 import { useState, FormEvent } from 'react';
 import useSWR from 'swr';
-
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 type Order = any; // si ya tienes tipo, reutilízalo
@@ -95,6 +95,7 @@ export default function Admin() {
   }
 
   return (
+    <ProtectedRoute allowedRoles={['admin']}>
     <main className="grid gap-4">
       {/* Pedidos recientes */}
       <section className="card">
@@ -353,5 +354,6 @@ export default function Admin() {
         </div>
       </section>
     </main>
+    </ProtectedRoute>
   );
 }
