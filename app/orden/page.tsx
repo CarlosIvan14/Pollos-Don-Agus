@@ -21,7 +21,7 @@ const BASE = {
   costillar_grande: 250,
 } as const;
 
-const FLAVORS = ['Natural', 'BBQ', 'Juan Gabriel', 'Chipotle', 'Habanero'];
+const FLAVORS = ['Sinaloa (Natural)', 'BBQ', 'BBQ Picante', 'Juan Gabriel', 'Jalapeño','Chipotle','Niurka'];
 const CHICKEN_STYLE = ['asado', 'rostizado'] as const;
 
 // Texto de la dirección del negocio

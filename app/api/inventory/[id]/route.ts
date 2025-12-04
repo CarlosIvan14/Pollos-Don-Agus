@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dbConnect } from '@/lib/db';
-import InventoryItem from '@/models/InventoryItem';
+import InventoryItem from '@/models/Product';
 
 interface Params {
   params: { id: string };

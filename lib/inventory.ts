@@ -1,4 +1,4 @@
-import InventoryItem from '@/models/InventoryItem';
+import InventoryItem from '@/models/Product';
 import { OrderItem } from './pricing';
 
 /**
