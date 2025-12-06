@@ -21,7 +21,16 @@ const BASE = {
   costillar_grande: 250,
 } as const;
 
-const FLAVORS = ['Sinaloa (Natural)', 'BBQ', 'BBQ Picante', 'Juan Gabriel', 'Jalapeño','Chipotle','Niurka'];
+const FLAVORS = [
+  'Sinaloa (Natural)',
+  'BBQ',
+  'BBQ Picante',
+  'Juan Gabriel',
+  'Jalapeño',
+  'Chipotle',
+  'Niurka',
+];
+
 const CHICKEN_STYLE = ['asado', 'rostizado'] as const;
 
 // Texto de la dirección del negocio
@@ -110,15 +119,15 @@ function DeliverySwitch({
 
 type DialogTone = 'info' | 'error' | 'success';
 
+type OrderItemState = {
+  kind: ItemKind;
+  qty: number;
+  flavor?: string; // aplica a pollos asados y costillares
+  chickenStyle?: 'asado' | 'rostizado'; // solo pollos
+};
+
 export default function OrdenCliente() {
-  const [items, setItems] = useState<
-    {
-      kind: ItemKind;
-      qty: number;
-      flavor?: string; // solo aplica cuando es asado
-      chickenStyle?: 'asado' | 'rostizado';
-    }[]
-  >([]);
+  const [items, setItems] = useState<OrderItemState[]>([]);
   const [delivery, setDelivery] = useState(true);
   const [tortillas, setTortillas] = useState(0);
   const [name, setName] = useState('');
@@ -197,10 +206,27 @@ export default function OrdenCliente() {
 
   function add(kind: ItemKind) {
     const isChicken = kind === 'pollo' || kind === 'medio_pollo';
-    const extra = isChicken
-      ? ({ chickenStyle: 'asado', flavor: 'Natural' } as const)
-      : {};
-    setItems((s) => [{ kind, qty: 1, ...extra }, ...s]);
+    const isRib =
+      kind === 'costillar_medio' ||
+      kind === 'costillar_normal' ||
+      kind === 'costillar_grande';
+
+    setItems((s) => {
+      const base: OrderItemState = {
+        kind,
+        qty: 1,
+      };
+
+      if (isChicken) {
+        base.chickenStyle = 'asado';
+      }
+
+      if (isChicken || isRib) {
+        base.flavor = FLAVORS[0]; // sabor por defecto
+      }
+
+      return [base, ...s];
+    });
   }
 
   useEffect(() => {
@@ -313,7 +339,8 @@ export default function OrdenCliente() {
       const j = await res.json();
       showDialog({
         title: 'Error',
-        message: j.error || 'Hubo un problema al enviar tu pedido. Intenta de nuevo.',
+        message:
+          j.error || 'Hubo un problema al enviar tu pedido. Intenta de nuevo.',
         tone: 'error',
       });
     }
@@ -324,7 +351,8 @@ export default function OrdenCliente() {
     if (!('geolocation' in navigator)) {
       showDialog({
         title: 'Sin GPS',
-        message: 'Tu navegador no soporta GPS. Ingresa referencias detalladas en la dirección.',
+        message:
+          'Tu navegador no soporta GPS. Ingresa referencias detalladas en la dirección.',
         tone: 'info',
       });
       return;
@@ -567,19 +595,25 @@ export default function OrdenCliente() {
               </p>
             </div>
             <span className="text-[11px] text-zinc-500">
-              {hasItems ? `${items.length} línea(s) en el pedido` : 'Sin productos aún'}
+              {hasItems
+                ? `${items.length} línea(s) en el pedido`
+                : 'Sin productos aún'}
             </span>
           </header>
 
           {!hasItems && (
             <div className="rounded-lg border border-dashed border-zinc-700 py-6 text-center text-sm text-zinc-500">
-              Aún no has agregado nada. Empieza seleccionando un pollo o costillar
-              de la parte superior.
+              Aún no has agregado nada. Empieza seleccionando un pollo o
+              costillar de la parte superior.
             </div>
           )}
 
           {items.map((it, idx) => {
             const isChicken = it.kind === 'pollo' || it.kind === 'medio_pollo';
+            const isRib =
+              it.kind === 'costillar_medio' ||
+              it.kind === 'costillar_normal' ||
+              it.kind === 'costillar_grande';
 
             return (
               <div
@@ -599,13 +633,13 @@ export default function OrdenCliente() {
                   {isChicken && (
                     <div className="text-[11px] text-zinc-400">
                       {it.chickenStyle === 'asado'
-                        ? `Asado • ${it.flavor ?? 'Natural'}`
+                        ? `Asado • ${it.flavor ?? FLAVORS[0]}`
                         : 'Rostizado'}
                     </div>
                   )}
                 </div>
 
-                {/* Sabor (solo en asado) */}
+                {/* Sabor */}
                 {isChicken ? (
                   <div>
                     <label className="text-[11px] text-zinc-400">
@@ -614,7 +648,30 @@ export default function OrdenCliente() {
                     <select
                       className="input w-full mt-1 disabled:opacity-50"
                       disabled={it.chickenStyle !== 'asado'}
-                      value={it.flavor ?? 'Natural'}
+                      value={it.flavor ?? FLAVORS[0]}
+                      onChange={(e) =>
+                        setItems((s) =>
+                          s.map((x, i) =>
+                            i === idx ? { ...x, flavor: e.target.value } : x
+                          )
+                        )
+                      }
+                    >
+                      {FLAVORS.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : isRib ? (
+                  <div>
+                    <label className="text-[11px] text-zinc-400">
+                      Sabor
+                    </label>
+                    <select
+                      className="input w-full mt-1"
+                      value={it.flavor ?? FLAVORS[0]}
                       onChange={(e) =>
                         setItems((s) =>
                           s.map((x, i) =>
@@ -647,14 +704,13 @@ export default function OrdenCliente() {
                         setItems((s) =>
                           s.map((x, i) => {
                             if (i !== idx) return x;
-                            const nextStyle = e.target.value as
-                              | 'asado'
-                              | 'rostizado';
+                            const nextStyle = e.target
+                              .value as 'asado' | 'rostizado';
                             return nextStyle === 'asado'
                               ? {
                                   ...x,
                                   chickenStyle: nextStyle,
-                                  flavor: 'Natural',
+                                  flavor: x.flavor ?? FLAVORS[0],
                                 }
                               : {
                                   ...x,
@@ -738,7 +794,7 @@ export default function OrdenCliente() {
                 ? deliveryOk
                   ? 'border-emerald-500/80 bg-emerald-900/25 shadow-[0_0_25px_rgba(16,185,129,0.35)]'
                   : 'border-red-500/90 bg-red-900/25 shadow-[0_0_25px_rgba(239,68,68,0.45)]'
-              : 'border-zinc-800 bg-zinc-900/80'
+                : 'border-zinc-800 bg-zinc-900/80'
             }`}
           >
             <div className="flex items-center justify-between gap-3">
@@ -942,7 +998,10 @@ export default function OrdenCliente() {
           ) : (
             <p className="text-xs text-zinc-400">
               Primero arma tu pedido. Una vez que tengas los productos
-              seleccionados {delivery && !deliveryOk ? 'y cumplas el mínimo para domicilio ' : ''}
+              seleccionados{' '}
+              {delivery && !deliveryOk
+                ? 'y cumplas el mínimo para domicilio '
+                : ''}
               te pediremos tus datos para coordinar la entrega.
             </p>
           )}

@@ -26,29 +26,29 @@ const featuredProducts = [
     description: "Pollo + costillas + guarniciones para compartir en familia.",
     price: "$420 MXN",
     tag: "Para compartir",
-    image: "/img/foto4.png",
+    image: "/img/foto5.jpg",
   },
 ];
 
 const gallery = [
   {
     id: 1,
-    title: "Fachada del restaurante",
+    title: "",
     image: "/img/foto1.png",
   },
   {
     id: 2,
-    title: "Área de mesas",
+    title: "",
     image: "/img/foto2.png",
   },
   {
     id: 3,
-    title: "Parrilla a la leña",
+    title: "",
     image: "/img/foto3.png",
   },
   {
     id: 4,
-    title: "Detalle de platillos",
+    title: "",
     image: "/img/foto4.png",
   },
 ];
