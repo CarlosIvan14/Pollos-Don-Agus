@@ -3,7 +3,7 @@ import mongoose, { Schema } from 'mongoose';
 
 export interface IProduct {
   _id?: string;
-  code: string; // ej. "pollo_crudo", "costillar_crudo"
+  code: string; // ej. "pollo_crudo", ""
   name: string; // ej. "Pollo crudo entero"
   category: 'pollo' | 'aderezo' | 'costillar' | 'envase' | 'combustible' | 'ingrediente' | 'otro';
   unit: string;       // "kg", "pieza", "l", "g", "paquete", etc.
@@ -29,7 +29,7 @@ const ProductSchema = new Schema<IProduct>(
     name: { type: String, required: true, trim: true },
     category: {
       type: String,
-      enum: ['pollo', 'aderezo', 'envase', 'combustible', 'ingrediente', 'otro'],
+      enum: ['pollo', 'aderezo','costillar', 'envase', 'combustible', 'ingrediente', 'otro'],
       default: 'otro',
     },
     unit: { type: String, required: true, trim: true },

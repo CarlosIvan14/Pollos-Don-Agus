@@ -1,10 +1,10 @@
+// app/api/orders/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import Order from '@/models/Order';
 import { broadcast } from '@/lib/sse';
 import { orderTotal, canDeliver, OrderItem } from '@/lib/pricing';
-// si usas inventario automático, vuelve a importar esto:
-// import { aplicarInventarioParaOrden } from '@/lib/inventory';
+import { aplicarInventarioParaOrden } from '@/lib/inventory'; // ⬅️ NUEVO
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,7 +51,6 @@ export async function POST(req: NextRequest) {
 
     const total = orderTotal(items, delivery, tortillasPacks);
 
-    // 🔻 NUEVO: status inicial según origen y si es domicilio
     const source: 'cliente' | 'caja' = body.source || 'cliente';
     const initialStatus =
       source === 'caja' && !delivery ? 'entregado' : 'pendiente';
@@ -68,12 +67,12 @@ export async function POST(req: NextRequest) {
       status: initialStatus,
     });
 
-    // si usas inventario automático, descomenta:
-    // try {
-    //   await aplicarInventarioParaOrden(items);
-    // } catch (invErr) {
-    //   console.error('Error al aplicar inventario:', invErr);
-    // }
+    // ✅ Aplicar inventario automático
+    try {
+      await aplicarInventarioParaOrden(items);
+    } catch (invErr) {
+      console.error('Error al aplicar inventario:', invErr);
+    }
 
     broadcast({
       type: 'nueva_orden',

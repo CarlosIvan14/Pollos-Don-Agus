@@ -45,7 +45,7 @@ function categoryLabel(cat: string) {
     case 'pollo':
       return 'Pollos';
     case 'costillar':
-      return 'Costillares';
+      return 'costillar';
     case 'aderezo':
       return 'Aderezos';
     case 'envase':
