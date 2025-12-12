@@ -55,7 +55,7 @@ function isValidMxPhone(raw: string) {
   return d.length === 10;
 }
 
-/* Tiempo: siguiente múltiplo de 30 min, tope 23:00 */
+/* Tiempo: siguiente múltiplo de 30 min, pero solo entre 12:00 y 18:00 */
 function roundToNext30(date = new Date()) {
   const d = new Date(date);
   const add = (30 - (d.getMinutes() % 30)) % 30;
@@ -68,10 +68,14 @@ function todayAt(hour: number, minute = 0) {
   return d;
 }
 function buildTimeSlots(hoursAhead = 8, locale = 'es-MX') {
-  const start = roundToNext30();
-  const maxEnd = todayAt(23, 0); // 11:00 pm
-  const proposedEnd = new Date(start.getTime() + hoursAhead * 60 * 60 * 1000);
-  const end = proposedEnd < maxEnd ? proposedEnd : maxEnd;
+  const opening = todayAt(12, 0); // 12:00
+  const closing = todayAt(18, 0); // 18:00
+  const now = new Date();
+
+  if (now >= closing) return []; // horario cerrado
+
+  const start = now <= opening ? opening : roundToNext30(now);
+  const end = closing;
 
   const fmt = new Intl.DateTimeFormat(locale, {
     hour: '2-digit',
@@ -126,6 +130,88 @@ type OrderItemState = {
   chickenStyle?: 'asado' | 'rostizado'; // solo pollos
 };
 
+type InventorySnapshot = {
+  pollo: number;
+  costillar_normal: number;
+  costillar_grande: number;
+};
+
+// --- Helpers de consumo de inventario (cliente) ---
+
+function getChickenUnitsFromItems(items: OrderItemState[]): number {
+  return items.reduce((sum, it) => {
+    if (it.kind === 'pollo') return sum + 1 * it.qty;
+    if (it.kind === 'medio_pollo') return sum + 0.5 * it.qty;
+    return sum;
+  }, 0);
+}
+
+function getRibNormalUnitsFromItems(items: OrderItemState[]): number {
+  return items.reduce((sum, it) => {
+    if (it.kind === 'costillar_normal') return sum + 1 * it.qty;
+    if (it.kind === 'costillar_medio') return sum + 0.5 * it.qty;
+    return sum;
+  }, 0);
+}
+
+function getRibGrandeUnitsFromItems(items: OrderItemState[]): number {
+  return items.reduce((sum, it) => {
+    if (it.kind === 'costillar_grande') return sum + 1 * it.qty;
+    return sum;
+  }, 0);
+}
+
+function validateInventoryForKind(
+  items: OrderItemState[],
+  inv: InventorySnapshot,
+  changedKind: ItemKind
+): string | null {
+  if (changedKind === 'pollo' || changedKind === 'medio_pollo') {
+    const used = getChickenUnitsFromItems(items);
+    if (used > inv.pollo) {
+      return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+    }
+  }
+
+  if (changedKind === 'costillar_medio' || changedKind === 'costillar_normal') {
+    const used = getRibNormalUnitsFromItems(items);
+    if (used > inv.costillar_normal) {
+      return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+    }
+  }
+
+  if (changedKind === 'costillar_grande') {
+    const used = getRibGrandeUnitsFromItems(items);
+    if (used > inv.costillar_grande) {
+      return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+    }
+  }
+
+  return null;
+}
+
+function validateInventoryGlobal(
+  items: OrderItemState[],
+  inv: InventorySnapshot
+): string | null {
+  const polloU = getChickenUnitsFromItems(items);
+  if (polloU > inv.pollo) {
+    return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+  }
+
+  const ribN = getRibNormalUnitsFromItems(items);
+  if (ribN > inv.costillar_normal) {
+    return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+  }
+
+  const ribG = getRibGrandeUnitsFromItems(items);
+  if (ribG > inv.costillar_grande) {
+    return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+  }
+
+  return null;
+}
+
 export default function OrdenCliente() {
   const [items, setItems] = useState<OrderItemState[]>([]);
   const [delivery, setDelivery] = useState(true);
@@ -140,6 +226,9 @@ export default function OrdenCliente() {
   const [showMap, setShowMap] = useState(false);
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+
+  const [inventory, setInventory] = useState<InventorySnapshot | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
 
   // ---- estado para modal bonito ----
   const [dialog, setDialog] = useState<{
@@ -170,9 +259,29 @@ export default function OrdenCliente() {
     });
   }
 
-  useEffect(() => setSlots(buildTimeSlots(8, 'es-MX')), []);
+  useEffect(() => {
+    setSlots(buildTimeSlots(8, 'es-MX'));
+
+    // Cargar stock de pollo / costillares
+    (async () => {
+      try {
+        const res = await fetch('/api/inventory/availability', {
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error('Error al cargar inventario');
+        const data = (await res.json()) as InventorySnapshot;
+        setInventory(data);
+      } catch (e) {
+        console.error(e);
+        setInventoryError(
+          'No se pudo leer el inventario actual. El stock mostrado puede no estar actualizado.'
+        );
+      }
+    })();
+  }, []);
 
   const hasItems = items.length > 0;
+  const pedidosCerrados = slots.length === 0;
 
   // Reglas mínimo para domicilio:
   // - 1 pollo completo
@@ -204,14 +313,15 @@ export default function OrdenCliente() {
     return sub + surcharge + tortillas * 10;
   }, [items, delivery, deliveryOk, tortillas, hasItems]);
 
+  // Añadir producto respetando inventario
   function add(kind: ItemKind) {
-    const isChicken = kind === 'pollo' || kind === 'medio_pollo';
-    const isRib =
-      kind === 'costillar_medio' ||
-      kind === 'costillar_normal' ||
-      kind === 'costillar_grande';
+    setItems((current) => {
+      const isChicken = kind === 'pollo' || kind === 'medio_pollo';
+      const isRib =
+        kind === 'costillar_medio' ||
+        kind === 'costillar_normal' ||
+        kind === 'costillar_grande';
 
-    setItems((s) => {
       const base: OrderItemState = {
         kind,
         qty: 1,
@@ -220,12 +330,51 @@ export default function OrdenCliente() {
       if (isChicken) {
         base.chickenStyle = 'asado';
       }
-
       if (isChicken || isRib) {
-        base.flavor = FLAVORS[0]; // sabor por defecto
+        base.flavor = FLAVORS[0];
       }
 
-      return [base, ...s];
+      const next = [base, ...current];
+
+      if (inventory) {
+        const err = validateInventoryForKind(next, inventory, kind);
+        if (err) {
+          showDialog({
+            title: 'Sin stock suficiente',
+            message: err,
+            tone: 'error',
+          });
+          return current;
+        }
+      }
+
+      return next;
+    });
+  }
+
+  // Incrementar cantidad de una línea respetando inventario
+  function incrementItem(idx: number) {
+    setItems((current) => {
+      const target = current[idx];
+      if (!target) return current;
+
+      const next = current.map((x, i) =>
+        i === idx ? { ...x, qty: x.qty + 1 } : x
+      );
+
+      if (inventory) {
+        const err = validateInventoryForKind(next, inventory, target.kind);
+        if (err) {
+          showDialog({
+            title: 'Sin stock suficiente',
+            message: err,
+            tone: 'error',
+          });
+          return current;
+        }
+      }
+
+      return next;
     });
   }
 
@@ -241,7 +390,7 @@ export default function OrdenCliente() {
 
   // ---------- VALIDACIONES EN DOS FASES ----------
 
-  // 1) Valida SOLO el pedido (productos + mínimo)
+  // 1) Valida SOLO el pedido (productos + mínimo + stock)
   function validateOrder(baseMode: 'pickup' | 'delivery') {
     const errs: string[] = [];
     if (!hasItems) {
@@ -251,6 +400,13 @@ export default function OrdenCliente() {
       errs.push(
         'Completa tu pedido para cumplir el mínimo de envío a domicilio.'
       );
+    }
+    if (pedidosCerrados) {
+      errs.push('El horario de pedidos en línea es de 12:00 pm a 6:00 pm.');
+    }
+    if (inventory) {
+      const invErr = validateInventoryGlobal(items, inventory);
+      if (invErr) errs.push(invErr);
     }
     return errs;
   }
@@ -287,8 +443,8 @@ export default function OrdenCliente() {
             : 'Agrega productos a tu pedido',
         message:
           mode === 'delivery'
-            ? 'Antes de continuar, completa tu pedido para envío a domicilio (agrega producto o cumple el mínimo).'
-            : 'Antes de continuar, agrega al menos un producto a tu pedido.',
+            ? 'Antes de continuar, completa tu pedido para envío a domicilio (agrega producto, cumple el mínimo o ajusta el stock).'
+            : 'Antes de continuar, agrega al menos un producto y revisa que no sobrepase el stock.',
         tone: 'error',
       });
       return;
@@ -443,6 +599,9 @@ export default function OrdenCliente() {
 
   // Mensaje bajo el botón principal según estado
   const actionHint = useMemo(() => {
+    if (pedidosCerrados) {
+      return 'Los pedidos en línea están disponibles de 12:00 pm a 6:00 pm.';
+    }
     if (!hasItems) {
       return 'Agrega al menos un producto para continuar.';
     }
@@ -454,7 +613,11 @@ export default function OrdenCliente() {
       return 'Todo listo, revisa tus datos y confirma tu pedido a domicilio.';
     }
     return 'Revisa tu horario y datos para confirmar tu pedido para recoger.';
-  }, [hasItems, delivery, deliveryOk, geo]);
+  }, [hasItems, delivery, deliveryOk, geo, pedidosCerrados]);
+
+  const noPollo = inventory && inventory.pollo <= 0;
+  const noCostillarNormal = inventory && inventory.costillar_normal <= 0;
+  const noCostillarGrande = inventory && inventory.costillar_grande <= 0;
 
   // UI
   return (
@@ -489,6 +652,11 @@ export default function OrdenCliente() {
                 <span>• 2. Completa tus datos</span>
                 <span>• 3. Confirma Pick Up o Domicilio</span>
               </div>
+              {inventoryError && (
+                <p className="text-[11px] text-amber-300 pt-1">
+                  {inventoryError}
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -509,80 +677,114 @@ export default function OrdenCliente() {
           </header>
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <button
-              className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-              onClick={() => add('pollo')}
-            >
-              <div>
-                <div className="text-xs text-amber-300 mb-1">Más pedido</div>
-                <div className="font-semibold">Pollo completo</div>
-                <div className="text-xs text-zinc-400 mt-1">
-                  Ideal para familia o compartir.
+            {/* Pollo y medio pollo solo si hay stock de pollo crudo */}
+            {(!inventory || !noPollo) && (
+              <button
+                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
+                onClick={() => add('pollo')}
+                disabled={pedidosCerrados}
+              >
+                <div>
+                  <div className="text-xs text-amber-300 mb-1">
+                    Más pedido
+                  </div>
+                  <div className="font-semibold">Pollo completo</div>
+                  <div className="text-xs text-zinc-400 mt-1">
+                    Ideal para familia o compartir.
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3 text-[11px] text-zinc-400">
-                $200 pickup • +$20 envío (por pedido)
-              </div>
-            </button>
+                <div className="mt-3 text-[11px] text-zinc-400">
+                  $200 pickup • +$20 envío (por pedido)
+                </div>
+              </button>
+            )}
 
-            <button
-              className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-              onClick={() => add('medio_pollo')}
-            >
-              <div>
-                <div className="font-semibold">1/2 Pollo</div>
-                <div className="text-xs text-zinc-400 mt-1">
-                  Para antojo individual o compartir ligero.
+            {(!inventory || !noPollo) && (
+              <button
+                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
+                onClick={() => add('medio_pollo')}
+                disabled={pedidosCerrados}
+              >
+                <div>
+                  <div className="font-semibold">1/2 Pollo</div>
+                  <div className="text-xs text-zinc-400 mt-1">
+                    Para antojo individual o compartir ligero.
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3 text-[11px] text-zinc-400">$100 pickup</div>
-            </button>
+                <div className="mt-3 text-[11px] text-zinc-400">
+                  $100 pickup
+                </div>
+              </button>
+            )}
 
-            <button
-              className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-              onClick={() => add('costillar_medio')}
-            >
-              <div>
-                <div className="font-semibold">1/2 Costillar</div>
-                <div className="text-xs text-zinc-400 mt-1">
-                  Costillas a la leña para una o dos personas.
+            {/* Costillar medio / normal según stock base de costillar_normal */}
+            {(!inventory || !noCostillarNormal) && (
+              <button
+                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
+                onClick={() => add('costillar_medio')}
+                disabled={pedidosCerrados}
+              >
+                <div>
+                  <div className="font-semibold">1/2 Costillar</div>
+                  <div className="text-xs text-zinc-400 mt-1">
+                    Costillas a la leña para una o dos personas.
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3 text-[11px] text-zinc-400">$100 pickup</div>
-            </button>
+                <div className="mt-3 text-[11px] text-zinc-400">
+                  $100 pickup
+                </div>
+              </button>
+            )}
 
-            <button
-              className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-              onClick={() => add('costillar_normal')}
-            >
-              <div>
-                <div className="text-xs text-amber-300 mb-1">Recomendado</div>
-                <div className="font-semibold">Costillar</div>
-                <div className="text-xs text-zinc-400 mt-1">
-                  Costillas en su punto, perfectas para compartir.
+            {(!inventory || !noCostillarNormal) && (
+              <button
+                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
+                onClick={() => add('costillar_normal')}
+                disabled={pedidosCerrados}
+              >
+                <div>
+                  <div className="text-xs text-amber-300 mb-1">
+                    Recomendado
+                  </div>
+                  <div className="font-semibold">Costillar</div>
+                  <div className="text-xs text-zinc-400 mt-1">
+                    Costillas en su punto, perfectas para compartir.
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3 text-[11px] text-zinc-400">
-                $200 pickup • +$20 envío (por pedido)
-              </div>
-            </button>
+                <div className="mt-3 text-[11px] text-zinc-400">
+                  $200 pickup • +$20 envío (por pedido)
+                </div>
+              </button>
+            )}
 
-            <button
-              className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-              onClick={() => add('costillar_grande')}
-            >
-              <div>
-                <div className="text-xs text-emerald-300 mb-1">Para varios</div>
-                <div className="font-semibold">Costillar Grande</div>
-                <div className="text-xs text-zinc-400 mt-1">
-                  Porción generosa para varios comensales.
+            {/* Costillar grande según stock costillar_grande */}
+            {(!inventory || !noCostillarGrande) && (
+              <button
+                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
+                onClick={() => add('costillar_grande')}
+                disabled={pedidosCerrados}
+              >
+                <div>
+                  <div className="text-xs text-emerald-300 mb-1">
+                    Para varios
+                  </div>
+                  <div className="font-semibold">Costillar Grande</div>
+                  <div className="text-xs text-zinc-400 mt-1">
+                    Porción generosa para varios comensales.
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3 text-[11px] text-zinc-400">
-                $250–$300 pickup • +$20 envío (por pedido)
-              </div>
-            </button>
+                <div className="mt-3 text-[11px] text-zinc-400">
+                  $250–$300 pickup • +$20 envío (por pedido)
+                </div>
+              </button>
+            )}
           </div>
+
+          {inventory && noPollo && noCostillarNormal && noCostillarGrande && (
+            <p className="text-xs text-red-300">
+              No hay stock disponible de pollos ni costillares en este momento.
+            </p>
+          )}
         </section>
 
         {/* Carrito */}
@@ -758,13 +960,7 @@ export default function OrdenCliente() {
                   <button
                     className="btn h-8 w-8 !p-0 !leading-none flex items-center justify-center"
                     aria-label="Aumentar"
-                    onClick={() =>
-                      setItems((s) =>
-                        s.map((x, i) =>
-                          i === idx ? { ...x, qty: x.qty + 1 } : x
-                        )
-                      )
-                    }
+                    onClick={() => incrementItem(idx)}
                   >
                     <span className="text-base">+</span>
                   </button>
@@ -936,7 +1132,9 @@ export default function OrdenCliente() {
                     suppressHydrationWarning
                   >
                     <option value="" disabled>
-                      Selecciona una hora
+                      {pedidosCerrados
+                        ? 'Horario cerrado (12:00–18:00)'
+                        : 'Selecciona una hora'}
                     </option>
                     {slots.map((s) => (
                       <option key={s.value} value={s.value}>
@@ -1035,16 +1233,18 @@ export default function OrdenCliente() {
         <section className="grid gap-2">
           {delivery ? (
             <button
-              className="btn h-14 rounded-full border-zinc-700 bg-zinc-900/80 hover:bg-zinc-800 flex items-center justify-center gap-2 text-sm md:text-base"
+              className="btn h-14 rounded-full border-zinc-700 bg-zinc-900/80 hover:bg-zinc-800 flex items-center justify-center gap-2 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => submit('delivery')}
+              disabled={pedidosCerrados}
             >
               <span>🚚</span>
               <span>Confirmar pedido a domicilio</span>
             </button>
           ) : (
             <button
-              className="btn h-14 rounded-full border border-zinc-700 bg-zinc-900/80 hover:bg-zinc-800 flex items-center justify-center gap-2 text-sm md:text-base"
+              className="btn h-14 rounded-full border border-zinc-700 bg-zinc-900/80 hover:bg-zinc-800 flex items-center justify-center gap-2 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => submit('pickup')}
+              disabled={pedidosCerrados}
             >
               <span>🛍️</span>
               <span>Confirmar pedido para recoger</span>

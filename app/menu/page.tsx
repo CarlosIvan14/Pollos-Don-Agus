@@ -28,7 +28,7 @@ const MENU_ITEMS: MenuItem[] = [
     description:
       'Perfecto para un antojo individual o para compartir ligero. Sabor clásico de la casa.',
     priceLabel: '$100',
-    imageSrc: '/menu/medio-pollo.jpg',
+    imageSrc: '/menu/medio-pollo.png',
     badges: ['Asado / Rostizado'],
   },
   {

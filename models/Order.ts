@@ -21,7 +21,6 @@ const OrderSchema = new Schema({
     addressNote: String,
     geo: { lat: Number, lng: Number },
   },
-  cashierId: { type: Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
 export default mongoose.models.Order || mongoose.model('Order', OrderSchema);

@@ -37,9 +37,7 @@ function buildConsumptionMap(items: OrderItem[]): Record<string, number> {
         break;
 
       case 'costillar_medio':
-        // medio costillar → 0.5 de costillar normal
-        // si prefieres tener un producto distinto (code "costillar_medio"),
-        // cámbialo aquí.
+        // medio costillar
         add('costillar_normal', qty * 0.5);
         break;
 

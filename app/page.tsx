@@ -9,8 +9,7 @@ const featuredProducts = [
     description: "Jugoso, dorado y acompañado de papas, salsa y tortillas.",
     price: "$220 MXN",
     tag: "Más pedido",
-    image:
-      "/img/foto4.png", // reemplaza por tus rutas reales
+    image: "/img/foto4.png",
   },
   {
     id: 2,
@@ -26,31 +25,15 @@ const featuredProducts = [
     description: "Pollo + costillas + guarniciones para compartir en familia.",
     price: "$420 MXN",
     tag: "Para compartir",
-    image: "/img/foto5.jpg",
+    image: "/img/combo.png",
   },
 ];
 
 const gallery = [
-  {
-    id: 1,
-    title: "",
-    image: "/img/foto1.png",
-  },
-  {
-    id: 2,
-    title: "",
-    image: "/img/foto2.png",
-  },
-  {
-    id: 3,
-    title: "",
-    image: "/img/foto3.png",
-  },
-  {
-    id: 4,
-    title: "",
-    image: "/img/foto4.png",
-  },
+  { id: 1, title: "", image: "/img/foto1.png" },
+  { id: 2, title: "", image: "/img/foto2.png" },
+  { id: 3, title: "", image: "/img/foto3.png" },
+  { id: 4, title: "", image: "/img/foto4.png" },
 ];
 
 export default function Home() {
@@ -127,8 +110,6 @@ export default function Home() {
             className="relative"
           >
             <div className="aspect-video rounded-2xl overflow-hidden border border-zinc-700/60 bg-black/40 backdrop-blur shadow-2xl">
-              {/* Opción A: video embebido (promo) */}
-              {/* Reemplaza el src con tu video o short del negocio */}
               <video
                 className="h-full w-full object-cover"
                 autoPlay
@@ -148,32 +129,60 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ACCESOS RÁPIDOS POR TIPO DE USUARIO */}
-     <section className="grid grid-cols-1 md:grid-cols-1 place-items-center">
-      <a
-        className="card hover:ring-2 ring-amber-500/60 transition group w-full max-w-md"
-        href="/orden"
-      >
-        <h3 className="text-lg font-semibold flex items-center justify-between">
-          Cliente
-          <span className="text-xs bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full">
-            Sin registro
-          </span>
-        </h3>
+      {/* ACCESOS RÁPIDOS PARA CLIENTES */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Card ORDENAR */}
+        <a
+          className="card hover:ring-2 ring-amber-500/60 transition group flex flex-col gap-3"
+          href="/orden"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <span className="text-2xl" aria-hidden>
+                🧾
+              </span>
+              <span>Ordenar</span>
+            </h3>
+          </div>
 
-        <p className="text-sm text-zinc-400 mt-1">
-          Pide en línea en menos de 1 minuto.
-        </p>
+          <p className="text-sm text-zinc-400">
+            Haz tu pedido en línea en menos de 1 minuto. Elige pollos, costillas y antojitos.
+          </p>
 
-        {/* Botón centrado */}
-        <div className="mt-4 flex justify-center">
-          <span className="text-xs text-zinc-500 group-hover:text-amber-200 flex items-center gap-2">
-            Empezar pedido
-            <span aria-hidden>→</span>
-          </span>
-        </div>
-      </a>
-    </section>
+          <div className="mt-3 flex justify-between items-center text-xs text-zinc-500 group-hover:text-amber-200">
+            <span className="flex items-center gap-2">
+              Empezar pedido
+              <span aria-hidden>→</span>
+            </span>
+          </div>
+        </a>
+
+        {/* Card VER MENÚ */}
+        <a
+          className="card hover:ring-2 ring-amber-500/60 transition group flex flex-col gap-3"
+          href="/menu"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <span className="text-2xl" aria-hidden>
+                📋
+              </span>
+              <span>Ver menú</span>
+            </h3>
+          </div>
+
+          <p className="text-sm text-zinc-400">
+            Explora todos nuestros pollos, costillares, botanas y tortillas antes de ordenar.
+          </p>
+
+          <div className="mt-3 flex justify-between items-center text-xs text-zinc-500 group-hover:text-amber-200">
+            <span className="flex items-center gap-2">
+              Ver carta completa
+              <span aria-hidden>→</span>
+            </span>
+          </div>
+        </a>
+      </section>
 
       {/* PRODUCTOS DESTACADOS / MENÚ INTERACTIVO */}
       <section className="space-y-4">
@@ -193,14 +202,13 @@ export default function Home() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
-          {featuredProducts.map((item, index) => (
+          {featuredProducts.map((item) => (
             <motion.button
               key={item.id}
               whileHover={{ y: -4, scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               transition={{ type: "spring", stiffness: 250, damping: 17 }}
               onClick={() => {
-                // aquí luego puedes abrir un modal / sheet con el detalle del producto
                 window.location.href = `/orden?producto=${item.id}`;
               }}
               className="text-left card flex flex-col overflow-hidden group"
@@ -235,56 +243,52 @@ export default function Home() {
         </div>
       </section>
 
-      {/* VIDEO / HISTORIA DEL LUGAR */}
-    <section className="grid gap-4 md:grid-cols-[1.2fr,1fr] items-center">
-      <div className="card h-full flex flex-col justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">
+      {/* HISTORIA DEL LUGAR / MAPA */}
+      <section className="grid gap-4 md:grid-cols-[1.2fr,1fr] items-center">
+        {/* Texto historia – rediseñado */}
+        <div className="card h-full flex flex-col justify-center items-center md:items-start text-center md:text-left py-8 px-6 space-y-4">
+          <h2 className="text-2xl md:text-3xl font-semibold">
             El sabor de casa, a la leña
           </h2>
-          <p className="mt-2 text-sm text-zinc-400">
-            Pollos Don Agus nació como un negocio familiar pensado para
-            domingos en familia, reuniones con amigos y antojos entre semana.
-            Preparado a la leña, con recetas tradicionales y el toque casero
-            que nos distingue.
+          <p className="mt-1 text-sm md:text-base text-zinc-300 max-w-2xl leading-relaxed">
+            Pollos Don Agus nació como un negocio familiar para domingos en familia,
+            reuniones con amigos y antojos entre semana. Todo se prepara a la leña,
+            con recetas tradicionales y el toque casero que nos distingue.
+          </p>
+
+          <ul className="mt-4 grid gap-2 text-sm text-zinc-200 md:grid-cols-1">
+            <li>• Asado a la leña todos los días</li>
+            <li>• Ingredientes frescos y salsas caseras</li>
+            <li>• Pedidos para llevar, recoger o comer en el local</li>
+          </ul>
+        </div>
+
+        {/* Mapa */}
+        <div className="card">
+          <h3 className="text-sm font-semibold mb-2">
+            Ubicación del restaurante
+          </h3>
+
+          <div className="aspect-video rounded-2xl overflow-hidden border border-zinc-700/70 bg-zinc-900">
+            <iframe
+              className="w-full h-full"
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3784.232374731987!2d-101.517!3d20.083!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x842cb537fb0cd0b5%3A0xaed0e5bbd48d304c!2sAltamirano%20216%2C%20Centro%2C%2058500%20Puru%C3%A1ndiro%2C%20Mich.!5e0!3m2!1ses-419!2smx!4v1700000000000!5m2!1ses-419!2smx"
+              allowFullScreen
+            ></iframe>
+          </div>
+
+          <p className="mt-2 text-[11px] text-zinc-500">
+            Altamirano #216, Colonia Centro, Puruándiro, Michoacán.
           </p>
         </div>
-        <ul className="mt-4 space-y-2 text-xs text-zinc-300">
-          <li>• Asado a la leña todos los días</li>
-          <li>• Ingredientes frescos y salsas caseras</li>
-          <li>• Pedidos para llevar, recoger o comer en el local</li>
-        </ul>
-      </div>
-
-      <div className="card">
-        <h3 className="text-sm font-semibold mb-2">
-          Ubicación del restaurante
-        </h3>
-
-        <div className="aspect-video rounded-2xl overflow-hidden border border-zinc-700/70 bg-zinc-900">
-          <iframe
-            className="w-full h-full"
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3784.232374731987!2d-101.517!3d20.083!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x842cb537fb0cd0b5%3A0xaed0e5bbd48d304c!2sAltamirano%20216%2C%20Centro%2C%2058500%20Puru%C3%A1ndiro%2C%20Mich.!5e0!3m2!1ses-419!2smx!4v1700000000000!5m2!1ses-419!2smx"
-            allowFullScreen
-          ></iframe>
-        </div>
-
-        <p className="mt-2 text-[11px] text-zinc-500">
-          Altamirano #216, Colonia Centro, Puruándiro, Michoacán.
-        </p>
-      </div>
-    </section>
-
+      </section>
 
       {/* GALERÍA DEL RESTAURANTE */}
       <section className="space-y-4">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify_between gap-2">
           <h2 className="text-xl font-semibold">Así se ve nuestro lugar</h2>
-          <span className="text-xs text-zinc-500">
-            Desliza para ver más fotos
-          </span>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">
