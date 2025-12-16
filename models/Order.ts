@@ -20,6 +20,7 @@ const OrderSchema = new Schema({
     phone: String,
     addressNote: String,
     geo: { lat: Number, lng: Number },
+    desiredAt: String, 
   },
 }, { timestamps: true });
 

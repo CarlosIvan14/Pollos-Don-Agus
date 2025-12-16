@@ -460,15 +460,29 @@ function AdminInner() {
       <section className="card">
         <h2 className="text-xl font-semibold">Pedidos recientes</h2>
         <div className="grid gap-2 mt-3">
+          {/* Encabezados de columnas */}
+          <div className="hidden md:grid md:grid-cols-7 px-3 pb-1 text-xs text-zinc-500 border-b border-zinc-800">
+            <div>Hora</div>
+            <div>Origen</div>
+            <div>Tipo</div>
+            <div>Detalle</div>
+            <div>Total</div>
+            <div>Teléfono</div>
+            <div>Hora deseada</div>
+          </div>
           {(orders || []).map((o: any) => (
             <div
               key={o._id}
-              className="grid md:grid-cols-6 gap-2 items-center bg-black/20 rounded-xl p-3"
+              className="grid md:grid-cols-7 gap-2 items-center bg-black/20 rounded-xl p-3"
             >
               <div className="font-semibold">
-                {new Date(o.createdAt).toLocaleTimeString()}
+                {new Date(o.createdAt).toLocaleTimeString('es-MX', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
               </div>
-              <div className="text-sm">{o.source}</div>
+              <div className="text-sm capitalize">{o.source}</div>
               <div className="text-sm">
                 {o.delivery ? 'Domicilio' : 'Local'}
               </div>
@@ -477,6 +491,15 @@ function AdminInner() {
               </div>
               <div className="font-bold">${o.total}</div>
               <div className="text-sm">{o.customer?.phone || '-'}</div>
+              <div className="text-xs md:text-sm font-medium text-amber-300">
+                {o.customer?.desiredAt
+                  ? new Date(o.customer.desiredAt).toLocaleTimeString('es-MX', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: true,
+                    })
+                  : '—'}
+              </div>
             </div>
           ))}
         </div>

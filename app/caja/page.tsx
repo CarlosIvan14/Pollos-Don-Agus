@@ -70,6 +70,15 @@ function formatTime(iso: string) {
   });
 }
 
+function formatDesiredTime(iso?: string) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString('es-MX', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
 /* --- helpers para slots de horas (igual que en orden del cliente) --- */
 
 function roundToNext30(date = new Date()) {
@@ -668,7 +677,7 @@ export default function Caja() {
           ) : (
             <div className="grid gap-2 text-sm">
               {/* Encabezados de columnas */}
-              <div className="hidden md:grid md:grid-cols-8 px-3 pb-1 text-xs text-zinc-500">
+              <div className="hidden md:grid md:grid-cols-9 px-3 pb-1 text-xs text-zinc-500">
                 <div>Hora</div>
                 <div>Origen</div>
                 <div>Cliente</div>
@@ -676,13 +685,14 @@ export default function Caja() {
                 <div>Detalle</div>
                 <div>Total</div>
                 <div>Teléfono</div>
+                <div>Hora deseada</div>
                 <div>Estado</div>
               </div>
 
               {todayOrders.map((o) => (
                 <div
                   key={o._id}
-                  className="grid gap-2 md:grid-cols-8 items-center bg-black/20 rounded-xl p-3"
+                  className="grid gap-2 md:grid-cols-9 items-center bg-black/20 rounded-xl p-3"
                 >
                   <div className="font-semibold">
                     {formatTime(o.createdAt)}
@@ -715,6 +725,10 @@ export default function Caja() {
 
                   <div className="text-xs md:text-sm">
                     {o.customer?.phone || '—'}
+                  </div>
+
+                  <div className="text-xs md:text-sm font-medium text-amber-300">
+                    {formatDesiredTime(o.customer?.desiredAt)}
                   </div>
 
                   {/* Estado editable */}
