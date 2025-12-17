@@ -6,10 +6,11 @@ import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { Trash2 } from 'lucide-react';
 import useSWR from 'swr';
+import { useInventoryStream } from '@/lib/useInventoryStream';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-type ItemKind = string; // Ahora puede ser cualquier código de producto
+type ItemKind = string;
 
 type MenuProduct = {
   _id: string;
@@ -95,8 +96,8 @@ function buildTimeSlots(hoursAhead = 8, locale = 'es-MX') {
 
   const list: { value: string; label: string }[] = [];
   for (let t = +start; t <= +end; t += 30 * 60 * 1000) {
-    const d = new Date(t);
-    list.push({ value: d.toISOString(), label: fmt.format(d) });
+    const dd = new Date(t);
+    list.push({ value: dd.toISOString(), label: fmt.format(dd) });
   }
   return list;
 }
@@ -136,42 +137,82 @@ type DialogTone = 'info' | 'error' | 'success';
 type OrderItemState = {
   kind: ItemKind;
   qty: number;
-  flavor?: string; // Nombre del sabor (para compatibilidad)
-  flavorId?: string; // ID del sabor
-  chickenStyle?: string; // Nombre del estilo (asado/rostizado)
-  styleId?: string; // ID del estilo
-  productId?: string; // ID del producto del menú
+  flavor?: string;
+  flavorId?: string;
+  chickenStyle?: string;
+  styleId?: string;
+  productId?: string;
 };
 
+/**
+ * Snapshot de inventario que te regresa /api/inventory/availability
+ * (lo dejamos compatible con lo que ya tienes)
+ */
 type InventorySnapshot = {
   pollo: number;
   costillar_normal: number;
   costillar_grande: number;
 };
 
-// --- Helpers de consumo de inventario (cliente) ---
+/**
+ * Mapa de consumo: por cada "kind" vendido, qué llave del inventario consume y en qué factor.
+ * - pollo: 1 pollo
+ * - medio_pollo: 0.5 pollo
+ * - costillar_medio: 0.5 costillar_normal (según tu lógica actual)
+ */
+const CONSUMPTION: Record<
+  string,
+  Array<{ inventoryKey: keyof InventorySnapshot | string; factor: number }>
+> = {
+  pollo: [{ inventoryKey: 'pollo', factor: 1 }],
+  medio_pollo: [{ inventoryKey: 'pollo', factor: 0.5 }],
 
-function getChickenUnitsFromItems(items: OrderItemState[]): number {
-  return items.reduce((sum, it) => {
-    if (it.kind === 'pollo') return sum + 1 * it.qty;
-    if (it.kind === 'medio_pollo') return sum + 0.5 * it.qty;
-    return sum;
-  }, 0);
+  costillar_normal: [{ inventoryKey: 'costillar_normal', factor: 1 }],
+  costillar_medio: [{ inventoryKey: 'costillar_normal', factor: 0.5 }],
+
+  costillar_grande: [{ inventoryKey: 'costillar_grande', factor: 1 }],
+};
+
+function getInventoryUsageFromItems(
+  items: OrderItemState[]
+): Record<string, number> {
+  const usage: Record<string, number> = {};
+  for (const it of items) {
+    const rules = CONSUMPTION[it.kind] ?? [{ inventoryKey: it.kind, factor: 1 }]; // fallback
+    for (const r of rules) {
+      usage[r.inventoryKey] = (usage[r.inventoryKey] ?? 0) + it.qty * r.factor;
+    }
+  }
+  return usage;
 }
 
-function getRibNormalUnitsFromItems(items: OrderItemState[]): number {
-  return items.reduce((sum, it) => {
-    if (it.kind === 'costillar_normal') return sum + 1 * it.qty;
-    if (it.kind === 'costillar_medio') return sum + 0.5 * it.qty;
-    return sum;
-  }, 0);
-}
+function validateInventoryGlobal(
+  items: OrderItemState[],
+  inv: InventorySnapshot
+): string | null {
+  const usage = getInventoryUsageFromItems(items);
 
-function getRibGrandeUnitsFromItems(items: OrderItemState[]): number {
-  return items.reduce((sum, it) => {
-    if (it.kind === 'costillar_grande') return sum + 1 * it.qty;
-    return sum;
-  }, 0);
+  for (const key of Object.keys(usage)) {
+    const used = usage[key] ?? 0;
+    const available = (inv as any)[key] ?? 0;
+
+    if (used > available) {
+      // Mensajes bonitos solo para los que ya manejas
+      if (key === 'pollo') {
+        return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_normal') {
+        return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_grande') {
+        return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+      }
+
+      return `No hay suficiente stock para "${key}". Disponible: ${available}. Ajusta la cantidad.`;
+    }
+  }
+
+  return null;
 }
 
 function validateInventoryForKind(
@@ -179,47 +220,26 @@ function validateInventoryForKind(
   inv: InventorySnapshot,
   changedKind: ItemKind
 ): string | null {
-  if (changedKind === 'pollo' || changedKind === 'medio_pollo') {
-    const used = getChickenUnitsFromItems(items);
-    if (used > inv.pollo) {
-      return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+  const rules = CONSUMPTION[changedKind] ?? [{ inventoryKey: changedKind, factor: 1 }];
+  const usage = getInventoryUsageFromItems(items);
+
+  for (const r of rules) {
+    const key = r.inventoryKey as string;
+    const used = usage[key] ?? 0;
+    const available = (inv as any)[key] ?? 0;
+
+    if (used > available) {
+      if (key === 'pollo') {
+        return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_normal') {
+        return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_grande') {
+        return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+      }
+      return `No hay suficiente stock para "${key}". Disponible: ${available}. Ajusta la cantidad.`;
     }
-  }
-
-  if (changedKind === 'costillar_medio' || changedKind === 'costillar_normal') {
-    const used = getRibNormalUnitsFromItems(items);
-    if (used > inv.costillar_normal) {
-      return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
-    }
-  }
-
-  if (changedKind === 'costillar_grande') {
-    const used = getRibGrandeUnitsFromItems(items);
-    if (used > inv.costillar_grande) {
-      return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
-    }
-  }
-
-  return null;
-}
-
-function validateInventoryGlobal(
-  items: OrderItemState[],
-  inv: InventorySnapshot
-): string | null {
-  const polloU = getChickenUnitsFromItems(items);
-  if (polloU > inv.pollo) {
-    return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
-  }
-
-  const ribN = getRibNormalUnitsFromItems(items);
-  if (ribN > inv.costillar_normal) {
-    return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
-  }
-
-  const ribG = getRibGrandeUnitsFromItems(items);
-  if (ribG > inv.costillar_grande) {
-    return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
   }
 
   return null;
@@ -230,7 +250,7 @@ export default function OrdenCliente() {
   const { data: menuData, isLoading: loadingMenu } = useSWR<MenuData>(
     '/api/menu/active',
     fetcher,
-    { refreshInterval: 30000 } // Refrescar cada 30 segundos
+    { refreshInterval: 30000 }
   );
 
   const [items, setItems] = useState<OrderItemState[]>([]);
@@ -265,10 +285,15 @@ export default function OrdenCliente() {
 
   // Obtener el sabor "Sinaloa (Natural)" como default
   const getDefaultFlavor = (): Flavor | undefined => {
-    return menuData?.flavors.find(
-      (f) => f.isActive && f.name.toLowerCase().includes('sinaloa')
-    ) || menuData?.flavors.find((f) => f.isActive && f.name.toLowerCase().includes('natural'))
-    || menuData?.flavors.find((f) => f.isActive);
+    return (
+      menuData?.flavors.find(
+        (f) => f.isActive && f.name.toLowerCase().includes('sinaloa')
+      ) ||
+      menuData?.flavors.find(
+        (f) => f.isActive && f.name.toLowerCase().includes('natural')
+      ) ||
+      menuData?.flavors.find((f) => f.isActive)
+    );
   };
 
   // Productos activos para mostrar (excluyendo solo en tienda si es delivery)
@@ -276,7 +301,7 @@ export default function OrdenCliente() {
     if (!menuData) return [];
     return menuData.products.filter((p) => {
       if (!p.isActive) return false;
-      if (delivery && p.showOnlyInStore) return false; // No mostrar productos solo en tienda para delivery
+      if (delivery && p.showOnlyInStore) return false;
       return true;
     });
   }, [menuData, delivery]);
@@ -310,36 +335,34 @@ export default function OrdenCliente() {
     });
   }
 
+  // Usar el stream de inventario en tiempo real
+  const { inventory: streamInventory, error: streamError } = useInventoryStream();
+
   useEffect(() => {
     setSlots(buildTimeSlots(8, 'es-MX'));
-
-    // Cargar stock de pollo / costillares
-    (async () => {
-      try {
-        const res = await fetch('/api/inventory/availability', {
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error('Error al cargar inventario');
-        const data = (await res.json()) as InventorySnapshot;
-        setInventory(data);
-      } catch (e) {
-        console.error(e);
-        setInventoryError(
-          'No se pudo leer el inventario actual. El stock mostrado puede no estar actualizado.'
-        );
-      }
-    })();
   }, []);
+
+  // Actualizar inventario cuando el stream cambia
+  useEffect(() => {
+    if (streamInventory) {
+      setInventory(streamInventory);
+      if (streamError) {
+        setInventoryError(null); // Limpiar errores si se reconecta
+      }
+    }
+  }, [streamInventory]);
+
+  // Mostrar error solo si hay un problema con el stream
+  useEffect(() => {
+    if (streamError) {
+      setInventoryError(streamError);
+    }
+  }, [streamError]);
 
   const hasItems = items.length > 0;
   const pedidosCerrados = slots.length === 0;
 
   // Reglas mínimo para domicilio:
-  // - 1 pollo completo
-  // - 1 costillar normal o grande
-  // - 2 medios pollos
-  // - 2 medios costillares
-  // - 1/2 pollo + 1/2 costillar
   function canDeliver(ruleItems = items) {
     const c = (k: ItemKind) =>
       ruleItems.reduce((a, it) => a + (it.kind === k ? it.qty : 0), 0);
@@ -359,33 +382,31 @@ export default function OrdenCliente() {
 
   const total = useMemo(() => {
     if (!hasItems || !menuData) return 0;
-    
+
     let sub = 0;
     for (const item of items) {
       const product = getProductByCode(item.kind);
       if (!product) continue;
-      
+
       let itemPrice = product.price;
-      
+
       // Agregar precio del sabor si existe
       if (item.flavorId) {
         const flavor = getFlavorById(item.flavorId);
-        if (flavor) {
-          itemPrice += flavor.price;
-        }
+        if (flavor) itemPrice += flavor.price;
       }
-      
+
       sub += itemPrice * item.qty;
     }
-    
-    const surcharge = delivery && deliveryOk ? 20 : 0; // +$20 por pedido
+
+    const surcharge = delivery && deliveryOk ? 20 : 0;
     return sub + surcharge + tortillas * 10;
   }, [items, delivery, deliveryOk, tortillas, hasItems, menuData]);
 
   // Añadir producto respetando inventario
   function add(kind: ItemKind) {
     if (!menuData) return;
-    
+
     const product = getProductByCode(kind);
     if (!product) return;
 
@@ -396,28 +417,30 @@ export default function OrdenCliente() {
         productId: product._id,
       };
 
-      // Si tiene estilos disponibles (pollos), usar el primero ACTIVO (siempre requerido)
+      // Estilos (pollos)
       const activeStyles = product.availableStyles
         .map((s) => menuData?.styles.find((st) => st._id === s._id))
         .filter((s): s is Style => s !== undefined && s.isActive);
-      
+
       if (activeStyles.length > 0) {
         const firstStyle = activeStyles[0];
         base.chickenStyle = firstStyle.name;
         base.styleId = firstStyle._id;
       }
 
-      // Si tiene sabores disponibles, usar "Sinaloa (Natural)" o el primero ACTIVO
+      // Sabores
       const activeFlavors = product.availableFlavors
         .map((f) => menuData?.flavors.find((fl) => fl._id === f._id))
         .filter((f): f is Flavor => f !== undefined && f.isActive);
-      
+
       if (activeFlavors.length > 0) {
-        // Buscar "Sinaloa (Natural)" primero, si no existe usar el primero
-        const sinaloaFlavor = activeFlavors.find(
-          (f) => f.name.toLowerCase().includes('sinaloa') || f.name.toLowerCase().includes('natural')
-        ) || activeFlavors[0];
-        
+        const sinaloaFlavor =
+          activeFlavors.find(
+            (f) =>
+              f.name.toLowerCase().includes('sinaloa') ||
+              f.name.toLowerCase().includes('natural')
+          ) || activeFlavors[0];
+
         base.flavor = sinaloaFlavor.name;
         base.flavorId = sinaloaFlavor._id;
       }
@@ -479,7 +502,7 @@ export default function OrdenCliente() {
   // Asegurar que siempre haya sabor y estilo seleccionados cuando se actualiza el menú
   useEffect(() => {
     if (!menuData) return;
-    
+
     setItems((current) =>
       current.map((item) => {
         const product = getProductByCode(item.kind);
@@ -487,12 +510,11 @@ export default function OrdenCliente() {
 
         let updated = { ...item };
         const isChicken = product.availableStyles.length > 0;
-        
-        // Obtener sabores y estilos disponibles (solo activos)
+
         const availableFlavors = product.availableFlavors
           .map((f) => menuData.flavors.find((fl) => fl._id === f._id))
           .filter((f): f is Flavor => f !== undefined && f.isActive);
-        
+
         const availableStyles = product.availableStyles
           .map((s) => menuData.styles.find((st) => st._id === s._id))
           .filter((s): s is Style => s !== undefined && s.isActive);
@@ -513,10 +535,12 @@ export default function OrdenCliente() {
 
         // Asegurar sabor seleccionado
         const currentFlavor = updated.flavorId ? getFlavorById(updated.flavorId) : null;
-        
+
         if (!currentFlavor) {
-          // No hay sabor seleccionado, usar default
-          if (defaultFlavor && availableFlavors.some((f) => f._id === defaultFlavor._id)) {
+          if (
+            defaultFlavor &&
+            availableFlavors.some((f) => f._id === defaultFlavor._id)
+          ) {
             updated.flavorId = defaultFlavor._id;
             updated.flavor = defaultFlavor.name;
           } else if (availableFlavors.length > 0) {
@@ -525,12 +549,15 @@ export default function OrdenCliente() {
           }
         } else if (!isAsado) {
           // Si el estilo no es "asado", forzar "Sinaloa (Natural)"
-          if (defaultFlavor && availableFlavors.some((f) => f._id === defaultFlavor._id)) {
+          if (
+            defaultFlavor &&
+            availableFlavors.some((f) => f._id === defaultFlavor._id)
+          ) {
             updated.flavorId = defaultFlavor._id;
             updated.flavor = defaultFlavor.name;
           }
         }
-        
+
         return updated;
       })
     );
@@ -541,13 +568,9 @@ export default function OrdenCliente() {
   // 1) Valida SOLO el pedido (productos + mínimo + stock)
   function validateOrder(baseMode: 'pickup' | 'delivery') {
     const errs: string[] = [];
-    if (!hasItems) {
-      errs.push('Agrega al menos un producto a tu pedido.');
-    }
+    if (!hasItems) errs.push('Agrega al menos un producto a tu pedido.');
     if (baseMode === 'delivery' && !deliveryOk) {
-      errs.push(
-        'Completa tu pedido para cumplir el mínimo de envío a domicilio.'
-      );
+      errs.push('Completa tu pedido para cumplir el mínimo de envío a domicilio.');
     }
     if (pedidosCerrados) {
       errs.push('El horario de pedidos en línea es de 12:00 pm a 6:00 pm.');
@@ -559,7 +582,7 @@ export default function OrdenCliente() {
     return errs;
   }
 
-  // 2) Valida datos del cliente (solo si el pedido ya está bien)
+  // 2) Valida datos del cliente
   function validateCustomer(baseMode: 'pickup' | 'delivery') {
     const errs: string[] = [];
 
@@ -571,8 +594,7 @@ export default function OrdenCliente() {
 
     if (baseMode === 'delivery') {
       if (!geo) errs.push('Selecciona tu ubicación en el mapa.');
-      if (!addressNote.trim())
-        errs.push('La dirección / referencias es obligatoria.');
+      if (!addressNote.trim()) errs.push('La dirección / referencias es obligatoria.');
       if (!delivery) errs.push('Activa “Entrega a domicilio”.');
     }
 
@@ -585,10 +607,7 @@ export default function OrdenCliente() {
     if (orderErrs.length > 0) {
       setFormErrors(orderErrs);
       showDialog({
-        title:
-          mode === 'delivery'
-            ? 'Completa tu pedido'
-            : 'Agrega productos a tu pedido',
+        title: mode === 'delivery' ? 'Completa tu pedido' : 'Agrega productos a tu pedido',
         message:
           mode === 'delivery'
             ? 'Antes de continuar, completa tu pedido para envío a domicilio (agrega producto, cumple el mínimo o ajusta el stock).'
@@ -604,26 +623,24 @@ export default function OrdenCliente() {
     if (customerErrs.length > 0) {
       showDialog({
         title: 'Revisa tus datos',
-        message:
-          'Faltan datos obligatorios. Revisa el cuadro rojo de errores antes de confirmar.',
+        message: 'Faltan datos obligatorios. Revisa el cuadro rojo de errores antes de confirmar.',
         tone: 'error',
       });
       return;
     }
 
     const wantDelivery = mode === 'delivery';
-    
-    // Preparar items con IDs para el backend
+
     const itemsForSubmit = items.map((item) => ({
       kind: item.kind,
       qty: item.qty,
-      flavor: item.flavor, // Mantener para compatibilidad
+      flavor: item.flavor,
       flavorId: item.flavorId,
-      chickenStyle: item.chickenStyle, // Mantener para compatibilidad
+      chickenStyle: item.chickenStyle,
       styleId: item.styleId,
       productId: item.productId,
     }));
-    
+
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -640,6 +657,7 @@ export default function OrdenCliente() {
         },
       }),
     });
+
     if (res.ok) {
       showDialog({
         title: 'Pedido enviado',
@@ -655,8 +673,7 @@ export default function OrdenCliente() {
       const j = await res.json();
       showDialog({
         title: 'Error',
-        message:
-          j.error || 'Hubo un problema al enviar tu pedido. Intenta de nuevo.',
+        message: j.error || 'Hubo un problema al enviar tu pedido. Intenta de nuevo.',
         tone: 'error',
       });
     }
@@ -667,8 +684,7 @@ export default function OrdenCliente() {
     if (!('geolocation' in navigator)) {
       showDialog({
         title: 'Sin GPS',
-        message:
-          'Tu navegador no soporta GPS. Ingresa referencias detalladas en la dirección.',
+        message: 'Tu navegador no soporta GPS. Ingresa referencias detalladas en la dirección.',
         tone: 'info',
       });
       return;
@@ -683,7 +699,6 @@ export default function OrdenCliente() {
       const g = { lat: p.coords.latitude, lng: p.coords.longitude };
       setGeo(g);
       setGpsAccuracy(Math.round(p.coords.accuracy));
-      // si la precisión es mala, abrimos el mapa para que el usuario ajuste
       if (p.coords.accuracy > 60) setShowMap(true);
 
       try {
@@ -692,19 +707,15 @@ export default function OrdenCliente() {
           lat: String(g.lat),
           lon: String(g.lng),
         });
-        const r = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?${q.toString()}`,
-          { headers: { Accept: 'application/json' } }
-        );
+        const r = await fetch(`https://nominatim.openstreetmap.org/reverse?${q.toString()}`, {
+          headers: { Accept: 'application/json' },
+        });
         const j = await r.json();
         const addr = j?.display_name || '';
         if (addr) setAddressNote(addr);
-      } catch {
-        // ignoramos errores de reverse geocoding
-      }
+      } catch {}
     };
 
-    // 1) lectura rápida
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         best = pos;
@@ -714,7 +725,6 @@ export default function OrdenCliente() {
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
     );
 
-    // 2) mejora continua hasta 12s o precisión <= 25m
     const watcher = navigator.geolocation.watchPosition(
       (pos) => {
         if (!best || pos.coords.accuracy < best.coords.accuracy) {
@@ -726,9 +736,7 @@ export default function OrdenCliente() {
           commit(pos);
         }
       },
-      () => {
-        /* ignore */
-      },
+      () => {},
       { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
     );
 
@@ -753,21 +761,13 @@ export default function OrdenCliente() {
     if (!delivery) setGeo(null);
   }, [delivery]);
 
-  // Formularios visibles solo cuando el pedido ya está "listo" a nivel productos
-  const showCustomerForms =
-    hasItems && (!delivery || (delivery && deliveryOk));
+  const showCustomerForms = hasItems && (!delivery || (delivery && deliveryOk));
 
-  // Mensaje bajo el botón principal según estado
   const actionHint = useMemo(() => {
-    if (pedidosCerrados) {
-      return 'Los pedidos en línea están disponibles de 12:00 pm a 6:00 pm.';
-    }
-    if (!hasItems) {
-      return 'Agrega al menos un producto para continuar.';
-    }
-    if (delivery && !deliveryOk) {
+    if (pedidosCerrados) return 'Los pedidos en línea están disponibles de 12:00 pm a 6:00 pm.';
+    if (!hasItems) return 'Agrega al menos un producto para continuar.';
+    if (delivery && !deliveryOk)
       return 'Completa tu pedido con un pollo completo, un costillar o 2 medios para poder enviar a domicilio.';
-    }
     if (delivery) {
       if (!geo) return 'Toca “Usar mi ubicación” y agrega referencias.';
       return 'Todo listo, revisa tus datos y confirma tu pedido a domicilio.';
@@ -775,11 +775,11 @@ export default function OrdenCliente() {
     return 'Revisa tu horario y datos para confirmar tu pedido para recoger.';
   }, [hasItems, delivery, deliveryOk, geo, pedidosCerrados]);
 
+  // Para ocultar botones si se acabó inventario (solo para productos que dependen de esas llaves)
   const noPollo = inventory && inventory.pollo <= 0;
   const noCostillarNormal = inventory && inventory.costillar_normal <= 0;
   const noCostillarGrande = inventory && inventory.costillar_grande <= 0;
 
-  // UI
   return (
     <>
       <main className="space-y-6 md:space-y-8">
@@ -844,11 +844,10 @@ export default function OrdenCliente() {
             <>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 {availableProducts.map((product) => {
-                  // Verificar stock según tipo de producto
                   const isChicken = product.code === 'pollo' || product.code === 'medio_pollo';
                   const isRibNormal = product.code === 'costillar_medio' || product.code === 'costillar_normal';
                   const isRibGrande = product.code === 'costillar_grande';
-                  
+
                   const hideByStock =
                     (isChicken && inventory && noPollo) ||
                     (isRibNormal && inventory && noCostillarNormal) ||
@@ -902,9 +901,7 @@ export default function OrdenCliente() {
               </p>
             </div>
             <span className="text-[11px] text-zinc-500">
-              {hasItems
-                ? `${items.length} línea(s) en el pedido`
-                : 'Sin productos aún'}
+              {hasItems ? `${items.length} línea(s) en el pedido` : 'Sin productos aún'}
             </span>
           </header>
 
@@ -917,26 +914,22 @@ export default function OrdenCliente() {
 
           {items.map((it, idx) => {
             const product = getProductByCode(it.kind);
-            if (!product) return null;
+            if (!product || !menuData) return null;
 
             const isChicken = product.availableStyles.length > 0;
             const isRib = product.availableFlavors.length > 0 && !isChicken;
 
-            // Obtener sabores y estilos disponibles para este producto (solo activos)
-            // Filtrar por isActive usando los datos completos del menú
             const availableFlavors = product.availableFlavors
-              .map((f) => menuData?.flavors.find((fl) => fl._id === f._id))
+              .map((f) => menuData.flavors.find((fl) => fl._id === f._id))
               .filter((f): f is Flavor => f !== undefined && f.isActive);
-            
+
             const availableStyles = product.availableStyles
-              .map((s) => menuData?.styles.find((st) => st._id === s._id))
+              .map((s) => menuData.styles.find((st) => st._id === s._id))
               .filter((s): s is Style => s !== undefined && s.isActive);
 
-            // Determinar el estilo actual y si es "asado"
             const currentStyle = it.styleId ? getStyleById(it.styleId) : null;
             const isAsado = currentStyle?.name === 'asado';
 
-            // Calcular precio de la línea
             let linePrice = product.price;
             if (it.flavorId) {
               const flavor = getFlavorById(it.flavorId);
@@ -944,7 +937,6 @@ export default function OrdenCliente() {
             }
             linePrice *= it.qty;
 
-            // Obtener nombre del estilo
             const styleName = it.styleId
               ? getStyleById(it.styleId)?.displayName || it.chickenStyle
               : it.chickenStyle;
@@ -987,13 +979,7 @@ export default function OrdenCliente() {
                         if (flavor) {
                           setItems((s) =>
                             s.map((x, i) =>
-                              i === idx
-                                ? {
-                                    ...x,
-                                    flavorId: flavorId,
-                                    flavor: flavor.name,
-                                  }
-                                : x
+                              i === idx ? { ...x, flavorId, flavor: flavor.name } : x
                             )
                           );
                         }
@@ -1018,13 +1004,7 @@ export default function OrdenCliente() {
                         if (flavor) {
                           setItems((s) =>
                             s.map((x, i) =>
-                              i === idx
-                                ? {
-                                    ...x,
-                                    flavorId: flavorId,
-                                    flavor: flavor.name,
-                                  }
-                                : x
+                              i === idx ? { ...x, flavorId, flavor: flavor.name } : x
                             )
                           );
                         }
@@ -1041,7 +1021,7 @@ export default function OrdenCliente() {
                   <div />
                 )}
 
-                {/* Preparación (pollo y medio_pollo) */}
+                {/* Preparación */}
                 {isChicken && availableStyles.length > 0 && (
                   <div>
                     <label className="text-[11px] text-zinc-400">Preparación</label>
@@ -1052,28 +1032,30 @@ export default function OrdenCliente() {
                         const styleId = e.target.value;
                         const style = getStyleById(styleId);
                         if (style) {
-                          const isAsado = style.name === 'asado';
+                          const isAs = style.name === 'asado';
                           const defaultFlavor = getDefaultFlavor();
-                          
+
                           setItems((s) =>
                             s.map((x, i) => {
                               if (i !== idx) return x;
-                              
-                              // Si cambia a un estilo que no es "asado", usar "Sinaloa (Natural)"
-                              if (!isAsado && defaultFlavor && availableFlavors.some((f) => f._id === defaultFlavor._id)) {
+
+                              if (
+                                !isAs &&
+                                defaultFlavor &&
+                                availableFlavors.some((f) => f._id === defaultFlavor._id)
+                              ) {
                                 return {
                                   ...x,
-                                  styleId: styleId,
+                                  styleId,
                                   chickenStyle: style.name,
                                   flavorId: defaultFlavor._id,
                                   flavor: defaultFlavor.name,
                                 };
                               }
-                              
-                              // Si cambia a "asado", mantener el sabor actual o usar el default
+
                               return {
                                 ...x,
-                                styleId: styleId,
+                                styleId,
                                 chickenStyle: style.name,
                                 flavorId: x.flavorId || (defaultFlavor?._id || ''),
                                 flavor: x.flavor || (defaultFlavor?.name || ''),
@@ -1092,12 +1074,10 @@ export default function OrdenCliente() {
                   </div>
                 )}
 
-                {/* Precio línea */}
-                <div className="text-right font-semibold text-zinc-100">
-                  ${linePrice}
-                </div>
+                {/* Precio */}
+                <div className="text-right font-semibold text-zinc-100">${linePrice}</div>
 
-                {/* Controles cantidad + quitar */}
+                {/* Cantidad + quitar */}
                 <div className="flex items-center justify-end gap-2">
                   <button
                     className="btn h-8 w-8 !p-0 !leading-none flex items-center justify-center"
@@ -1105,9 +1085,7 @@ export default function OrdenCliente() {
                     onClick={() =>
                       setItems((s) =>
                         s.map((x, i) =>
-                          i === idx
-                            ? { ...x, qty: Math.max(1, x.qty - 1) }
-                            : x
+                          i === idx ? { ...x, qty: Math.max(1, x.qty - 1) } : x
                         )
                       )
                     }
@@ -1128,9 +1106,7 @@ export default function OrdenCliente() {
                   <button
                     aria-label="Quitar"
                     className="btn h-8 w-8 !p-0 !leading-none flex items-center justify-center bg-red-600 hover:bg-red-500"
-                    onClick={() =>
-                      setItems((s) => s.filter((_, i) => i !== idx))
-                    }
+                    onClick={() => setItems((s) => s.filter((_, i) => i !== idx))}
                     title="Quitar"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -1141,9 +1117,9 @@ export default function OrdenCliente() {
           })}
         </section>
 
-        {/* Opciones: entrega, tortillas, total */}
+        {/* Opciones */}
         <section className="grid md:grid-cols-3 gap-4">
-          {/* Entrega a domicilio con switch */}
+          {/* Entrega a domicilio */}
           <div
             className={`card flex flex-col gap-3 transition-all border-2 ${
               delivery
@@ -1193,9 +1169,7 @@ export default function OrdenCliente() {
           <div className="card flex items-center justify-between gap-3">
             <div>
               <div className="font-semibold">Tortillas extra</div>
-              <div className="text-sm text-zinc-400">
-                $10 por paquete adicional.
-              </div>
+              <div className="text-sm text-zinc-400">$10 por paquete adicional.</div>
               <div className="text-[11px] text-zinc-500 mt-1">
                 Ideal si son varios o quieres asegurar que alcance.
               </div>
@@ -1207,9 +1181,7 @@ export default function OrdenCliente() {
               >
                 −
               </button>
-              <div className="min-w-[3ch] text-center text-lg">
-                {tortillas}
-              </div>
+              <div className="min-w-[3ch] text-center text-lg">{tortillas}</div>
               <button
                 className="btn h-8 w-8 !p-0 flex items-center justify-center"
                 onClick={() => setTortillas(tortillas + 1)}
@@ -1254,7 +1226,7 @@ export default function OrdenCliente() {
 
           {showCustomerForms ? (
             <>
-              {/* Fila 1: nombre / teléfono / horario */}
+              {/* Fila 1 */}
               <div className="grid md:grid-cols-3 gap-4 items-end">
                 <div className="space-y-1">
                   <label className="block text-sm font-medium text-zinc-200 text-center md:text-left">
@@ -1292,9 +1264,7 @@ export default function OrdenCliente() {
                     suppressHydrationWarning
                   >
                     <option value="" disabled>
-                      {pedidosCerrados
-                        ? 'Horario cerrado (12:00–18:00)'
-                        : 'Selecciona una hora'}
+                      {pedidosCerrados ? 'Horario cerrado (12:00–18:00)' : 'Selecciona una hora'}
                     </option>
                     {slots.map((s) => (
                       <option key={s.value} value={s.value}>
@@ -1305,34 +1275,27 @@ export default function OrdenCliente() {
                 </div>
               </div>
 
-              {/* Fila 2 y 3: según sea domicilio o pick up */}
+              {/* Fila 2/3 */}
               {delivery ? (
                 <div className="space-y-3">
-                  {/* Fila 2: botón ubicación + texto */}
                   <div className="grid md:grid-cols-[auto,1fr] gap-3 items-center">
                     <div className="flex flex-wrap gap-2">
                       <button className="btn h-10 px-4" onClick={getLocation}>
                         Usar mi ubicación
                       </button>
                       {geo && (
-                        <button
-                          className="btn h-10 px-4"
-                          onClick={() => setShowMap(true)}
-                        >
+                        <button className="btn h-10 px-4" onClick={() => setShowMap(true)}>
                           Ajustar en mapa
                         </button>
                       )}
                     </div>
                     <span className="text-xs md:text-sm text-zinc-400">
                       {geo
-                        ? `Ubicación guardada: (${geo.lat.toFixed(
-                            5
-                          )}, ${geo.lng.toFixed(5)})`
+                        ? `Ubicación guardada: (${geo.lat.toFixed(5)}, ${geo.lng.toFixed(5)})`
                         : 'Aún no se ha seleccionado ubicación.'}
                     </span>
                   </div>
 
-                  {/* Fila 3: textarea */}
                   <div className="space-y-1">
                     <label className="block text-sm font-medium text-zinc-200">
                       Dirección / referencias para el repartidor *
@@ -1347,25 +1310,20 @@ export default function OrdenCliente() {
                 </div>
               ) : (
                 <p className="text-xs text-zinc-400">
-                  Como seleccionaste <span className="font-semibold">Pick Up</span>,
-                  solo necesitamos tus datos básicos y la hora aproximada en la
-                  que pasarás a recoger tu pedido.
+                  Como seleccionaste <span className="font-semibold">Pick Up</span>, solo necesitamos tus datos básicos y la hora aproximada.
                 </p>
               )}
             </>
           ) : (
             <p className="text-xs text-zinc-400">
-              Primero arma tu pedido. Una vez que tengas los productos
-              seleccionados{' '}
-              {delivery && !deliveryOk
-                ? 'y cumplas el mínimo para domicilio '
-                : ''}
+              Primero arma tu pedido. Una vez que tengas los productos seleccionados{' '}
+              {delivery && !deliveryOk ? 'y cumplas el mínimo para domicilio ' : ''}
               te pediremos tus datos para coordinar la entrega.
             </p>
           )}
         </section>
 
-        {/* Mapa del negocio cuando es Pick Up y ya hay pedido */}
+        {/* Mapa para Pick Up */}
         {!delivery && hasItems && (
           <section className="card grid gap-3">
             <div>
@@ -1389,7 +1347,7 @@ export default function OrdenCliente() {
           </section>
         )}
 
-        {/* Acciones: solo un botón según modo */}
+        {/* Acciones */}
         <section className="grid gap-2">
           {delivery ? (
             <button
@@ -1414,7 +1372,7 @@ export default function OrdenCliente() {
           <p className="text-xs text-zinc-400 text-center">{actionHint}</p>
         </section>
 
-        {/* Modal mapa para ajustar pin */}
+        {/* Modal mapa */}
         <MapPicker
           open={showMap}
           onClose={() => setShowMap(false)}
@@ -1426,7 +1384,7 @@ export default function OrdenCliente() {
         />
       </main>
 
-      {/* ---- Modal de feedback (reemplazo de alert) ---- */}
+      {/* Modal feedback */}
       {dialog.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
           <div
@@ -1440,16 +1398,10 @@ export default function OrdenCliente() {
           >
             <div className="space-y-2">
               <div className="text-3xl">
-                {dialog.tone === 'success'
-                  ? '✅'
-                  : dialog.tone === 'error'
-                  ? '⚠️'
-                  : 'ℹ️'}
+                {dialog.tone === 'success' ? '✅' : dialog.tone === 'error' ? '⚠️' : 'ℹ️'}
               </div>
               <h3 className="text-lg font-semibold">{dialog.title}</h3>
-              <p className="text-sm text-zinc-200 whitespace-pre-line">
-                {dialog.message}
-              </p>
+              <p className="text-sm text-zinc-200 whitespace-pre-line">{dialog.message}</p>
             </div>
             <div className="mt-5 flex justify-center">
               <button

@@ -1,7 +1,7 @@
 // lib/pricing.ts
 import { dbConnect } from './db';
-import MenuProduct from '@/models/MenuProduct';
-import Flavor from '@/models/Flavor';
+import MenuProduct, { IMenuProduct } from '@/models/MenuProduct';
+import Flavor, { IFlavor } from '@/models/Flavor';
 
 export type ItemKind = 'pollo'|'medio_pollo'|'costillar_medio'|'costillar_normal'|'costillar_grande'|'alitas'|'lechon';
 export type PricingInput = {
@@ -27,7 +27,7 @@ async function getProductPrice(kind: ItemKind): Promise<number> {
   }
 
   await dbConnect();
-  const product = await MenuProduct.findOne({ code: kind, isActive: true }).lean();
+  const product = await MenuProduct.findOne({ code: kind, isActive: true }).lean() as IMenuProduct | null;
   
   if (!product) {
     // Fallback a precios por defecto si no existe en DB
@@ -51,7 +51,7 @@ async function getFlavorPrice(flavorId?: string): Promise<number> {
   if (!flavorId) return 0;
   
   await dbConnect();
-  const flavor = await Flavor.findById(flavorId).lean();
+  const flavor = await Flavor.findById(flavorId).lean() as IFlavor | null;
   return flavor?.price || 0;
 }
 

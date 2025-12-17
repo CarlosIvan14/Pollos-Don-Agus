@@ -5,13 +5,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Quantity from '@/components/Quantity';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import useSWR from 'swr';
+import { useInventoryStream } from '@/lib/useInventoryStream';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-type ItemKind = string; // Ahora puede ser cualquier código de producto
+type ItemKind = string;
 
-// mismos valores que en el esquema de Mongoose:
-// enum: ['pendiente','confirmado','en_ruta','entregado','cancelado']
 type OrderStatus = 'pendiente' | 'confirmado' | 'en_ruta' | 'entregado';
 
 type Order = {
@@ -77,7 +76,7 @@ function formatDesiredTime(iso?: string) {
   });
 }
 
-/* --- helpers para slots de horas (igual que en orden del cliente) --- */
+/* --- helpers para slots de horas --- */
 
 function roundToNext30(date = new Date()) {
   const d = new Date(date);
@@ -110,8 +109,8 @@ function buildTimeSlots(hoursAhead = 8, locale = 'es-MX') {
 
   const list: { value: string; label: string }[] = [];
   for (let t = +start; t <= +end; t += 30 * 60 * 1000) {
-    const d = new Date(t);
-    list.push({ value: d.toISOString(), label: fmt.format(d) });
+    const dd = new Date(t);
+    list.push({ value: dd.toISOString(), label: fmt.format(dd) });
   }
   return list;
 }
@@ -126,7 +125,6 @@ function useNotifier(onNew?: () => void) {
       try {
         const msg = JSON.parse(e.data || '{}');
         if (msg?.type === 'nueva_orden') {
-          // beep + vibración
           try {
             audioCtxRef.current =
               audioCtxRef.current ||
@@ -188,24 +186,61 @@ function isValidMxPhone(raw: string) {
   return d.length === 10;
 }
 
-// --- Helpers de consumo de inventario (caja) ---
+/**
+ * Mapa de consumo (caja) igual que el cliente:
+ * items[code] = qty
+ * y lo traducimos a consumo real del snapshot de inventario.
+ */
+const CONSUMPTION: Record<
+  string,
+  Array<{ inventoryKey: keyof InventorySnapshot | string; factor: number }>
+> = {
+  pollo: [{ inventoryKey: 'pollo', factor: 1 }],
+  medio_pollo: [{ inventoryKey: 'pollo', factor: 0.5 }],
 
-function getChickenUnitsFromRecord(
-  rec: Record<string, number>
-): number {
-  return (rec.pollo || 0) * 1 + (rec.medio_pollo || 0) * 0.5;
+  costillar_normal: [{ inventoryKey: 'costillar_normal', factor: 1 }],
+  costillar_medio: [{ inventoryKey: 'costillar_normal', factor: 0.5 }],
+
+  costillar_grande: [{ inventoryKey: 'costillar_grande', factor: 1 }],
+};
+
+function getInventoryUsageFromRecord(rec: Record<string, number>) {
+  const usage: Record<string, number> = {};
+  for (const [kind, qty] of Object.entries(rec)) {
+    if (!qty || qty <= 0) continue;
+    const rules = CONSUMPTION[kind] ?? [{ inventoryKey: kind, factor: 1 }]; // fallback
+    for (const r of rules) {
+      usage[r.inventoryKey] = (usage[r.inventoryKey] ?? 0) + qty * r.factor;
+    }
+  }
+  return usage;
 }
 
-function getRibNormalUnitsFromRecord(
-  rec: Record<string, number>
-): number {
-  return (rec.costillar_normal || 0) * 1 + (rec.costillar_medio || 0) * 0.5;
-}
+function validateRecordGlobal(
+  rec: Record<string, number>,
+  inv: InventorySnapshot
+): string | null {
+  const usage = getInventoryUsageFromRecord(rec);
 
-function getRibGrandeUnitsFromRecord(
-  rec: Record<string, number>
-): number {
-  return (rec.costillar_grande || 0) * 1;
+  for (const key of Object.keys(usage)) {
+    const used = usage[key] ?? 0;
+    const available = (inv as any)[key] ?? 0;
+
+    if (used > available) {
+      if (key === 'pollo') {
+        return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_normal') {
+        return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_grande') {
+        return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+      }
+      return `No hay suficiente stock para "${key}". Disponible: ${available}. Ajusta la cantidad.`;
+    }
+  }
+
+  return null;
 }
 
 function validateRecordForKind(
@@ -213,58 +248,36 @@ function validateRecordForKind(
   inv: InventorySnapshot,
   changedKind: string
 ): string | null {
-  if (changedKind === 'pollo' || changedKind === 'medio_pollo') {
-    const used = getChickenUnitsFromRecord(rec);
-    if (used > inv.pollo) {
-      return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+  const rules = CONSUMPTION[changedKind] ?? [{ inventoryKey: changedKind, factor: 1 }];
+  const usage = getInventoryUsageFromRecord(rec);
+
+  for (const r of rules) {
+    const key = r.inventoryKey as string;
+    const used = usage[key] ?? 0;
+    const available = (inv as any)[key] ?? 0;
+
+    if (used > available) {
+      if (key === 'pollo') {
+        return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_normal') {
+        return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+      }
+      if (key === 'costillar_grande') {
+        return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+      }
+      return `No hay suficiente stock para "${key}". Disponible: ${available}. Ajusta la cantidad.`;
     }
-  }
-
-  if (changedKind === 'costillar_medio' || changedKind === 'costillar_normal') {
-    const used = getRibNormalUnitsFromRecord(rec);
-    if (used > inv.costillar_normal) {
-      return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
-    }
-  }
-
-  if (changedKind === 'costillar_grande') {
-    const used = getRibGrandeUnitsFromRecord(rec);
-    if (used > inv.costillar_grande) {
-      return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
-    }
-  }
-
-  return null;
-}
-
-function validateRecordGlobal(
-  rec: Record<string, number>,
-  inv: InventorySnapshot
-): string | null {
-  const polloU = getChickenUnitsFromRecord(rec);
-  if (polloU > inv.pollo) {
-    return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
-  }
-
-  const ribN = getRibNormalUnitsFromRecord(rec);
-  if (ribN > inv.costillar_normal) {
-    return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
-  }
-
-  const ribG = getRibGrandeUnitsFromRecord(rec);
-  if (ribG > inv.costillar_grande) {
-    return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
   }
 
   return null;
 }
 
 export default function Caja() {
-  // Cargar datos del menú
   const { data: menuData, isLoading: loadingMenu } = useSWR<MenuData>(
     '/api/menu/active',
     fetcher,
-    { refreshInterval: 30000 } // Refrescar cada 30 segundos
+    { refreshInterval: 30000 }
   );
 
   const [delivery, setDelivery] = useState(false);
@@ -286,25 +299,29 @@ export default function Caja() {
   const [inventory, setInventory] = useState<InventorySnapshot | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
 
+  // Usar el stream de inventario en tiempo real
+  const { inventory: streamInventory, error: streamError } = useInventoryStream();
+
   useEffect(() => {
     setSlots(buildTimeSlots(8, 'es-MX'));
-
-    (async () => {
-      try {
-        const res = await fetch('/api/inventory/availability', {
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error('Error al cargar inventario');
-        const data = (await res.json()) as InventorySnapshot;
-        setInventory(data);
-      } catch (e) {
-        console.error(e);
-        setInventoryError(
-          'No se pudo leer el inventario actual. El stock mostrado puede no estar actualizado.'
-        );
-      }
-    })();
   }, []);
+
+  // Actualizar inventario cuando el stream cambia
+  useEffect(() => {
+    if (streamInventory) {
+      setInventory(streamInventory);
+      if (streamError) {
+        setInventoryError(null); // Limpiar errores si se reconecta
+      }
+    }
+  }, [streamInventory]);
+
+  // Mostrar error solo si hay un problema con el stream
+  useEffect(() => {
+    if (streamError) {
+      setInventoryError(streamError);
+    }
+  }, [streamError]);
 
   async function load() {
     setLoading(true);
@@ -321,7 +338,6 @@ export default function Caja() {
 
   const pedidosCerrados = slots.length === 0;
 
-  // Solo pedidos de HOY
   const todayOrders = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -331,35 +347,24 @@ export default function Caja() {
     return [...orders]
       .filter((o) => {
         const dt = new Date(o.createdAt);
-        return (
-          dt.getFullYear() === y &&
-          dt.getMonth() === m &&
-          dt.getDate() === d
-        );
+        return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d;
       })
-      .sort(
-        (a, b) =>
-          new Date(a.createdAt).getTime() -
-          new Date(b.createdAt).getTime()
-      );
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }, [orders]);
 
-  // Helper para obtener producto por código
   const getProductByCode = (code: string): MenuProduct | undefined => {
     return menuData?.products.find((p) => p.code === code && p.isActive);
   };
 
   const total = useMemo(() => {
     if (!menuData) return 0;
-    
+
     let perItem = 0;
     for (const [code, qty] of Object.entries(items)) {
       const product = getProductByCode(code);
-      if (product && qty > 0) {
-        perItem += product.price * qty;
-      }
+      if (product && qty > 0) perItem += product.price * qty;
     }
-    
+
     const surcharge = delivery ? 20 : 0;
     return perItem + surcharge + tortillas * 10;
   }, [items, delivery, tortillas, menuData]);
@@ -379,11 +384,7 @@ export default function Caja() {
       .filter(([_, qty]) => qty > 0)
       .map(([code, qty]) => {
         const product = getProductByCode(code);
-        return {
-          kind: code,
-          qty,
-          productId: product?._id,
-        };
+        return { kind: code, qty, productId: product?._id };
       });
 
     if (!orderItems.length) {
@@ -391,7 +392,7 @@ export default function Caja() {
       return;
     }
 
-    // Chequeo final de stock contra inventario
+    // Chequeo final de stock
     if (inventory) {
       const invErr = validateRecordGlobal(items, inventory);
       if (invErr) {
@@ -400,22 +401,16 @@ export default function Caja() {
       }
     }
 
-    // Si es a domicilio, validar datos básicos del cliente
     if (delivery) {
       const errs: string[] = [];
       if (!customerName.trim()) errs.push('Nombre del cliente');
       if (!customerPhone.trim()) errs.push('Teléfono de contacto');
-      else if (!isValidMxPhone(customerPhone))
-        errs.push('Teléfono con 10 dígitos (MX)');
+      else if (!isValidMxPhone(customerPhone)) errs.push('Teléfono con 10 dígitos (MX)');
       if (!customerAddress.trim()) errs.push('Dirección del cliente');
       if (!customerDesiredAt.trim()) errs.push('Hora de entrega');
 
       if (errs.length > 0) {
-        alert(
-          `Faltan datos para el envío a domicilio:\n- ${errs.join(
-            '\n- '
-          )}`
-        );
+        alert(`Faltan datos para el envío a domicilio:\n- ${errs.join('\n- ')}`);
         return;
       }
     }
@@ -441,15 +436,15 @@ export default function Caja() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+
     if (res.ok) {
       alert('Venta registrada ✅');
-      // Limpiar items basándose en los productos disponibles
+
       const resetItems: Record<string, number> = {};
-      if (menuData) {
-        menuData.products.forEach((p) => {
-          resetItems[p.code] = 0;
-        });
-      }
+      menuData.products.forEach((p) => {
+        resetItems[p.code] = 0;
+      });
+
       setItems(resetItems);
       setTortillas(0);
       setDelivery(false);
@@ -477,9 +472,7 @@ export default function Caja() {
         alert(j?.error || 'No se pudo actualizar el estado');
         return;
       }
-      setOrders((prev) =>
-        prev.map((o) => (o._id === id ? { ...o, status } : o))
-      );
+      setOrders((prev) => prev.map((o) => (o._id === id ? { ...o, status } : o)));
     } finally {
       setSavingStatusId(null);
     }
@@ -500,11 +493,9 @@ export default function Caja() {
     }
   }, [menuData]);
 
-  // Productos disponibles para mostrar (todos los activos en caja)
   const availableProducts = useMemo(() => {
     if (!menuData) return [];
     return menuData.products.filter((p) => p.isActive).sort((a, b) => {
-      // Ordenar por código conocido primero
       const order: Record<string, number> = {
         pollo: 1,
         medio_pollo: 2,
@@ -527,7 +518,6 @@ export default function Caja() {
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {availableProducts.map((product) => {
-              // Verificar stock según tipo de producto
               const isChicken = product.code === 'pollo' || product.code === 'medio_pollo';
               const isRibNormal = product.code === 'costillar_medio' || product.code === 'costillar_normal';
               const isRibGrande = product.code === 'costillar_grande';
@@ -542,32 +532,20 @@ export default function Caja() {
 
               return (
                 <div key={product._id} className="card flex flex-col gap-2 items-center">
-                  <div className="text-center font-semibold">
-                    {product.name}
-                  </div>
+                  <div className="text-center font-semibold">{product.name}</div>
                   <div className="text-sm text-zinc-400">${product.price}</div>
+
                   <Quantity
                     value={items[product.code] || 0}
                     onChange={(n) =>
                       setItems((prev) => {
                         const safeN = Math.max(0, n);
-                        if (!inventory) {
-                          return {
-                            ...prev,
-                            [product.code]: safeN,
-                          };
-                        }
 
-                        const next = {
-                          ...prev,
-                          [product.code]: safeN,
-                        };
+                        const next = { ...prev, [product.code]: safeN };
 
-                        const err = validateRecordForKind(
-                          next,
-                          inventory,
-                          product.code
-                        );
+                        if (!inventory) return next;
+
+                        const err = validateRecordForKind(next, inventory, product.code);
                         if (err) {
                           alert(err);
                           return prev;
@@ -584,21 +562,16 @@ export default function Caja() {
         )}
 
         {inventoryError && (
-          <p className="text-[11px] text-amber-300">
-            {inventoryError}
-          </p>
+          <p className="text-[11px] text-amber-300">{inventoryError}</p>
         )}
 
         {/* Controles principales */}
         <div className="grid md:grid-cols-3 gap-3">
-          {/* Envío a domicilio con toggle + info */}
           <div className="card flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-semibold">Envío a domicilio</div>
-                <div className="text-sm text-zinc-400">
-                  + $20 por pedido.
-                </div>
+                <div className="text-sm text-zinc-400">+ $20 por pedido.</div>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <span>{delivery ? 'Sí' : 'No'}</span>
@@ -606,17 +579,13 @@ export default function Caja() {
               </div>
             </div>
             <p className="text-xs text-zinc-500">
-              Si se activa, se registran los datos del cliente para entrega
-              a domicilio.
+              Si se activa, se registran los datos del cliente para entrega a domicilio.
             </p>
             {pedidosCerrados && (
-              <p className="text-[11px] text-red-300">
-                Horario de ventas en caja para este módulo: 12:00–18:00.
-              </p>
+              <p className="text-[11px] text-red-300">Horario de ventas: 12:00–18:00.</p>
             )}
           </div>
 
-          {/* Tortillas */}
           <div className="card flex items-center justify-between">
             <div>
               <div className="font-semibold">Tortillas</div>
@@ -625,26 +594,22 @@ export default function Caja() {
             <Quantity value={tortillas} onChange={setTortillas} />
           </div>
 
-          {/* Total */}
           <div className="card flex items-center justify-between">
             <div className="text-xl font-bold">Total</div>
             <div className="text-3xl font-extrabold">${total}</div>
           </div>
         </div>
 
-        {/* Formulario de datos de envío (solo si es a domicilio) */}
+        {/* Formulario de envío */}
         {delivery && (
           <section className="card max-w-3xl mx-auto space-y-4">
             <header className="space-y-1">
-              <h2 className="text-lg font-semibold">
-                Datos de envío a domicilio
-              </h2>
+              <h2 className="text-lg font-semibold">Datos de envío a domicilio</h2>
               <p className="text-xs text-zinc-400">
                 Estos datos se usan para coordinar la entrega con el repartidor.
               </p>
             </header>
 
-            {/* Fila 1: nombre / teléfono / hora */}
             <div className="grid md:grid-cols-3 gap-4 items-end">
               <div className="space-y-1">
                 <label className="block text-sm font-medium text-zinc-200 text-center md:text-left">
@@ -681,9 +646,7 @@ export default function Caja() {
                   onChange={(e) => setCustomerDesiredAt(e.target.value)}
                 >
                   <option value="">
-                    {pedidosCerrados
-                      ? 'Horario cerrado (12:00–18:00)'
-                      : 'Selecciona una hora'}
+                    {pedidosCerrados ? 'Horario cerrado (12:00–18:00)' : 'Selecciona una hora'}
                   </option>
                   {slots.map((s) => (
                     <option key={s.value} value={s.value}>
@@ -694,7 +657,6 @@ export default function Caja() {
               </div>
             </div>
 
-            {/* Dirección: ocupa todo el ancho */}
             <div className="space-y-1">
               <label className="block text-sm font-medium text-zinc-200 text-center md:text-left">
                 Dirección / referencias *
@@ -714,9 +676,7 @@ export default function Caja() {
           onClick={registrarVenta}
           disabled={pedidosCerrados}
         >
-          {pedidosCerrados
-            ? 'Horario cerrado (12:00–18:00)'
-            : 'Registrar venta'}
+          {pedidosCerrados ? 'Horario cerrado (12:00–18:00)' : 'Registrar venta'}
         </button>
 
         {/* Lista de pedidos */}
@@ -733,12 +693,9 @@ export default function Caja() {
           {loading ? (
             <div className="text-sm text-zinc-400">Cargando…</div>
           ) : todayOrders.length === 0 ? (
-            <div className="text-sm text-zinc-400">
-              No hay pedidos registrados hoy.
-            </div>
+            <div className="text-sm text-zinc-400">No hay pedidos registrados hoy.</div>
           ) : (
             <div className="grid gap-2 text-sm">
-              {/* Encabezados de columnas */}
               <div className="hidden md:grid md:grid-cols-9 px-3 pb-1 text-xs text-zinc-500">
                 <div>Hora</div>
                 <div>Origen</div>
@@ -756,22 +713,14 @@ export default function Caja() {
                   key={o._id}
                   className="grid gap-2 md:grid-cols-9 items-center bg-black/20 rounded-xl p-3"
                 >
-                  <div className="font-semibold">
-                    {formatTime(o.createdAt)}
-                  </div>
+                  <div className="font-semibold">{formatTime(o.createdAt)}</div>
 
-                  <div className="capitalize text-xs md:text-sm">
-                    {o.source}
-                  </div>
+                  <div className="capitalize text-xs md:text-sm">{o.source}</div>
 
-                  <div className="truncate">
-                    {o.customer?.name || '—'}
-                  </div>
+                  <div className="truncate">{o.customer?.name || '—'}</div>
 
                   <div className="truncate text-xs md:text-sm">
-                    {o.delivery
-                      ? o.customer?.addressNote || 'Domicilio'
-                      : 'Local'}
+                    {o.delivery ? o.customer?.addressNote || 'Domicilio' : 'Local'}
                   </div>
 
                   <div className="text-xs md:text-sm">
@@ -782,32 +731,22 @@ export default function Caja() {
                         return `${it.qty}x ${label}`;
                       })
                       .join(', ')}
-                    {o.tortillasPacks
-                      ? ` + ${o.tortillasPacks} tortillas`
-                      : ''}
+                    {o.tortillasPacks ? ` + ${o.tortillasPacks} tortillas` : ''}
                   </div>
 
                   <div className="font-bold">${o.total}</div>
 
-                  <div className="text-xs md:text-sm">
-                    {o.customer?.phone || '—'}
-                  </div>
+                  <div className="text-xs md:text-sm">{o.customer?.phone || '—'}</div>
 
                   <div className="text-xs md:text-sm font-medium text-amber-300">
                     {formatDesiredTime(o.customer?.desiredAt)}
                   </div>
 
-                  {/* Estado editable */}
                   <div className="flex flex-col gap-1 text-xs md:text-sm">
                     <select
                       className="input h-8 text-xs"
                       value={o.status ?? 'pendiente'}
-                      onChange={(e) =>
-                        updateStatus(
-                          o._id,
-                          e.target.value as OrderStatus
-                        )
-                      }
+                      onChange={(e) => updateStatus(o._id, e.target.value as OrderStatus)}
                       disabled={savingStatusId === o._id}
                     >
                       {STATUS_OPTIONS.map((opt) => (
@@ -819,9 +758,7 @@ export default function Caja() {
                     <span className="text-[10px] text-zinc-500">
                       {savingStatusId === o._id
                         ? 'Guardando…'
-                        : STATUS_OPTIONS.find(
-                            (s) => s.value === (o.status ?? 'pendiente')
-                          )?.label}
+                        : STATUS_OPTIONS.find((s) => s.value === (o.status ?? 'pendiente'))?.label}
                     </span>
                   </div>
                 </div>

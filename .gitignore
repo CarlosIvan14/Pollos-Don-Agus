@@ -14,7 +14,7 @@ lib/auth/roles.ts
 .env.development.local
 .env.production.local
 .env.test.local
-
+INVENTORY_STREAM.md
 # === Next.js ===
 .next/
 out/
