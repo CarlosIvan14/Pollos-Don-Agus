@@ -4,6 +4,7 @@
 import { useState, FormEvent } from 'react';
 import useSWR from 'swr';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
+import MenuManagement from './components/MenuManagement';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -468,6 +469,9 @@ function AdminInner() {
           </form>
         </div>
       </section>
+
+      {/* 🍽️ Gestión del Menú */}
+      <MenuManagement />
 
       {/* 🧾 Pedidos recientes (ahora abajo) */}
       <section className="card">

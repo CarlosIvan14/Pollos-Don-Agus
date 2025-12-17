@@ -1,11 +1,13 @@
 import mongoose, { Schema, Types } from 'mongoose';
 
 const ItemSchema = new Schema({
-  kind: { type: String, required: true },
+  kind: { type: String, required: true }, // Código del producto: 'pollo', 'medio_pollo', etc.
   qty: { type: Number, required: true, min: 1 },
-  flavor: { type: String },
-  chickenStyle: { type: String, enum: ['asado','rostizado'], required: false },
-  overridePrice: { type: Number },
+  flavor: { type: String }, // Nombre del sabor 
+  flavorId: { type: Schema.Types.ObjectId, ref: 'Flavor' }, // Referencia al sabor
+  styleId: { type: Schema.Types.ObjectId, ref: 'Style' }, // Referencia al estilo
+  overridePrice: { type: Number }, // Precio override si se necesita
+  productId: { type: Schema.Types.ObjectId, ref: 'MenuProduct' }, // Referencia al producto del menú
 });
 
 const OrderSchema = new Schema({

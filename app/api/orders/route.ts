@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const total = orderTotal(items, delivery, tortillasPacks);
+    const total = await orderTotal(items, delivery, tortillasPacks);
 
     const source: 'cliente' | 'caja' = body.source || 'cliente';
     const initialStatus =

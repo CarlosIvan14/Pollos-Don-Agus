@@ -4,13 +4,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Quantity from '@/components/Quantity';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
+import useSWR from 'swr';
 
-type ItemKind =
-  | 'pollo'
-  | 'medio_pollo'
-  | 'costillar_medio'
-  | 'costillar_normal'
-  | 'costillar_grande';
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
+
+type ItemKind = string; // Ahora puede ser cualquier código de producto
 
 // mismos valores que en el esquema de Mongoose:
 // enum: ['pendiente','confirmado','en_ruta','entregado','cancelado']
@@ -33,20 +31,20 @@ type Order = {
   };
 };
 
-const LABELS: Record<ItemKind, string> = {
-  pollo: 'Pollo completo',
-  medio_pollo: '1/2 Pollo',
-  costillar_medio: '1/2 Costillar',
-  costillar_normal: 'Costillar',
-  costillar_grande: 'Costillar Grande',
+type MenuProduct = {
+  _id: string;
+  code: string;
+  name: string;
+  description?: string;
+  price: number;
+  isActive: boolean;
+  showOnlyInStore?: boolean;
 };
 
-const BASE: Record<ItemKind, number> = {
-  pollo: 200,
-  medio_pollo: 100,
-  costillar_medio: 100,
-  costillar_normal: 200,
-  costillar_grande: 250,
+type MenuData = {
+  products: MenuProduct[];
+  flavors: any[];
+  styles: any[];
 };
 
 const STATUS_OPTIONS: { value: OrderStatus; label: string }[] = [
@@ -193,27 +191,27 @@ function isValidMxPhone(raw: string) {
 // --- Helpers de consumo de inventario (caja) ---
 
 function getChickenUnitsFromRecord(
-  rec: Record<ItemKind, number>
+  rec: Record<string, number>
 ): number {
   return (rec.pollo || 0) * 1 + (rec.medio_pollo || 0) * 0.5;
 }
 
 function getRibNormalUnitsFromRecord(
-  rec: Record<ItemKind, number>
+  rec: Record<string, number>
 ): number {
   return (rec.costillar_normal || 0) * 1 + (rec.costillar_medio || 0) * 0.5;
 }
 
 function getRibGrandeUnitsFromRecord(
-  rec: Record<ItemKind, number>
+  rec: Record<string, number>
 ): number {
   return (rec.costillar_grande || 0) * 1;
 }
 
 function validateRecordForKind(
-  rec: Record<ItemKind, number>,
+  rec: Record<string, number>,
   inv: InventorySnapshot,
-  changedKind: ItemKind
+  changedKind: string
 ): string | null {
   if (changedKind === 'pollo' || changedKind === 'medio_pollo') {
     const used = getChickenUnitsFromRecord(rec);
@@ -240,7 +238,7 @@ function validateRecordForKind(
 }
 
 function validateRecordGlobal(
-  rec: Record<ItemKind, number>,
+  rec: Record<string, number>,
   inv: InventorySnapshot
 ): string | null {
   const polloU = getChickenUnitsFromRecord(rec);
@@ -262,15 +260,16 @@ function validateRecordGlobal(
 }
 
 export default function Caja() {
+  // Cargar datos del menú
+  const { data: menuData, isLoading: loadingMenu } = useSWR<MenuData>(
+    '/api/menu/active',
+    fetcher,
+    { refreshInterval: 30000 } // Refrescar cada 30 segundos
+  );
+
   const [delivery, setDelivery] = useState(false);
   const [tortillas, setTortillas] = useState(0);
-  const [items, setItems] = useState<Record<ItemKind, number>>({
-    pollo: 0,
-    medio_pollo: 0,
-    costillar_medio: 0,
-    costillar_normal: 0,
-    costillar_grande: 0,
-  });
+  const [items, setItems] = useState<Record<string, number>>({});
 
   // datos de cliente SOLO cuando es a domicilio
   const [customerName, setCustomerName] = useState('');
@@ -345,13 +344,25 @@ export default function Caja() {
       );
   }, [orders]);
 
+  // Helper para obtener producto por código
+  const getProductByCode = (code: string): MenuProduct | undefined => {
+    return menuData?.products.find((p) => p.code === code && p.isActive);
+  };
+
   const total = useMemo(() => {
-    const perItem = (
-      Object.entries(items) as [ItemKind, number][]
-    ).reduce((sum, [k, qty]) => sum + BASE[k] * (qty || 0), 0);
+    if (!menuData) return 0;
+    
+    let perItem = 0;
+    for (const [code, qty] of Object.entries(items)) {
+      const product = getProductByCode(code);
+      if (product && qty > 0) {
+        perItem += product.price * qty;
+      }
+    }
+    
     const surcharge = delivery ? 20 : 0;
     return perItem + surcharge + tortillas * 10;
-  }, [items, delivery, tortillas]);
+  }, [items, delivery, tortillas, menuData]);
 
   async function registrarVenta() {
     if (pedidosCerrados) {
@@ -359,9 +370,22 @@ export default function Caja() {
       return;
     }
 
-    const orderItems = (
-      Object.entries(items) as [ItemKind, number][]
-    ).flatMap(([k, qty]) => (qty ? [{ kind: k, qty }] : []));
+    if (!menuData) {
+      alert('Cargando productos del menú, espera un momento...');
+      return;
+    }
+
+    const orderItems = Object.entries(items)
+      .filter(([_, qty]) => qty > 0)
+      .map(([code, qty]) => {
+        const product = getProductByCode(code);
+        return {
+          kind: code,
+          qty,
+          productId: product?._id,
+        };
+      });
+
     if (!orderItems.length) {
       alert('Agrega al menos 1 artículo');
       return;
@@ -419,13 +443,14 @@ export default function Caja() {
     });
     if (res.ok) {
       alert('Venta registrada ✅');
-      setItems({
-        pollo: 0,
-        medio_pollo: 0,
-        costillar_medio: 0,
-        costillar_normal: 0,
-        costillar_grande: 0,
-      });
+      // Limpiar items basándose en los productos disponibles
+      const resetItems: Record<string, number> = {};
+      if (menuData) {
+        menuData.products.forEach((p) => {
+          resetItems[p.code] = 0;
+        });
+      }
+      setItems(resetItems);
       setTortillas(0);
       setDelivery(false);
       setCustomerName('');
@@ -464,62 +489,99 @@ export default function Caja() {
   const noCostillarNormal = inventory && inventory.costillar_normal <= 0;
   const noCostillarGrande = inventory && inventory.costillar_grande <= 0;
 
+  // Inicializar items cuando se carga el menú
+  useEffect(() => {
+    if (menuData && Object.keys(items).length === 0) {
+      const initialItems: Record<string, number> = {};
+      menuData.products.forEach((p) => {
+        initialItems[p.code] = 0;
+      });
+      setItems(initialItems);
+    }
+  }, [menuData]);
+
+  // Productos disponibles para mostrar (todos los activos en caja)
+  const availableProducts = useMemo(() => {
+    if (!menuData) return [];
+    return menuData.products.filter((p) => p.isActive).sort((a, b) => {
+      // Ordenar por código conocido primero
+      const order: Record<string, number> = {
+        pollo: 1,
+        medio_pollo: 2,
+        costillar_medio: 3,
+        costillar_normal: 4,
+        costillar_grande: 5,
+      };
+      return (order[a.code] || 99) - (order[b.code] || 99);
+    });
+  }, [menuData]);
+
   return (
     <ProtectedRoute allowedRoles={['caja', 'admin']}>
       <main className="grid gap-4">
         {/* Registro rápido */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {(Object.keys(LABELS) as ItemKind[]).map((k) => {
-            const hide =
-              inventory &&
-              (((k === 'pollo' || k === 'medio_pollo') && noPollo) ||
-                ((k === 'costillar_medio' || k === 'costillar_normal') &&
-                  noCostillarNormal) ||
-                (k === 'costillar_grande' && noCostillarGrande));
+        {loadingMenu ? (
+          <div className="text-center py-8 text-zinc-400">
+            <p>Cargando productos del menú...</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {availableProducts.map((product) => {
+              // Verificar stock según tipo de producto
+              const isChicken = product.code === 'pollo' || product.code === 'medio_pollo';
+              const isRibNormal = product.code === 'costillar_medio' || product.code === 'costillar_normal';
+              const isRibGrande = product.code === 'costillar_grande';
 
-            if (hide) return null;
+              const hide =
+                inventory &&
+                ((isChicken && noPollo) ||
+                  (isRibNormal && noCostillarNormal) ||
+                  (isRibGrande && noCostillarGrande));
 
-            return (
-              <div key={k} className="card flex flex-col gap-2 items-center">
-                <div className="text-center font-semibold">
-                  {LABELS[k]}
-                </div>
-                <div className="text-sm text-zinc-400">${BASE[k]}</div>
-                <Quantity
-                  value={items[k]}
-                  onChange={(n) =>
-                    setItems((prev) => {
-                      const safeN = Math.max(0, n);
-                      if (!inventory) {
-                        return {
+              if (hide) return null;
+
+              return (
+                <div key={product._id} className="card flex flex-col gap-2 items-center">
+                  <div className="text-center font-semibold">
+                    {product.name}
+                  </div>
+                  <div className="text-sm text-zinc-400">${product.price}</div>
+                  <Quantity
+                    value={items[product.code] || 0}
+                    onChange={(n) =>
+                      setItems((prev) => {
+                        const safeN = Math.max(0, n);
+                        if (!inventory) {
+                          return {
+                            ...prev,
+                            [product.code]: safeN,
+                          };
+                        }
+
+                        const next = {
                           ...prev,
-                          [k]: safeN,
+                          [product.code]: safeN,
                         };
-                      }
 
-                      const next = {
-                        ...prev,
-                        [k]: safeN,
-                      };
+                        const err = validateRecordForKind(
+                          next,
+                          inventory,
+                          product.code
+                        );
+                        if (err) {
+                          alert(err);
+                          return prev;
+                        }
 
-                      const err = validateRecordForKind(
-                        next,
-                        inventory,
-                        k
-                      );
-                      if (err) {
-                        alert(err);
-                        return prev;
-                      }
-
-                      return next;
-                    })
-                  }
-                />
-              </div>
-            );
-          })}
-        </div>
+                        return next;
+                      })
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {inventoryError && (
           <p className="text-[11px] text-amber-300">
@@ -714,7 +776,11 @@ export default function Caja() {
 
                   <div className="text-xs md:text-sm">
                     {o.items
-                      .map((it) => `${it.qty}x ${LABELS[it.kind]}`)
+                      .map((it) => {
+                        const product = menuData?.products.find((p) => p.code === it.kind);
+                        const label = product?.name || it.kind.replace('_', ' ');
+                        return `${it.qty}x ${label}`;
+                      })
                       .join(', ')}
                     {o.tortillasPacks
                       ? ` + ${o.tortillasPacks} tortillas`

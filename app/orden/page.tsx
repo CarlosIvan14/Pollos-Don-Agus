@@ -5,33 +5,43 @@ import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { Trash2 } from 'lucide-react';
+import useSWR from 'swr';
 
-type ItemKind =
-  | 'pollo'
-  | 'medio_pollo'
-  | 'costillar_medio'
-  | 'costillar_normal'
-  | 'costillar_grande';
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-const BASE = {
-  pollo: 200,
-  medio_pollo: 100,
-  costillar_medio: 100,
-  costillar_normal: 200,
-  costillar_grande: 250,
-} as const;
+type ItemKind = string; // Ahora puede ser cualquier código de producto
 
-const FLAVORS = [
-  'Sinaloa (Natural)',
-  'BBQ',
-  'BBQ Picante',
-  'Juan Gabriel',
-  'Jalapeño',
-  'Chipotle',
-  'Niurka',
-];
+type MenuProduct = {
+  _id: string;
+  code: string;
+  name: string;
+  description?: string;
+  price: number;
+  isActive: boolean;
+  availableFlavors: Array<{ _id: string; name: string; price: number }>;
+  availableStyles: Array<{ _id: string; name: string; displayName: string }>;
+  showOnlyInStore?: boolean;
+};
 
-const CHICKEN_STYLE = ['asado', 'rostizado'] as const;
+type Flavor = {
+  _id: string;
+  name: string;
+  price: number;
+  isActive: boolean;
+};
+
+type Style = {
+  _id: string;
+  name: string;
+  displayName: string;
+  isActive: boolean;
+};
+
+type MenuData = {
+  products: MenuProduct[];
+  flavors: Flavor[];
+  styles: Style[];
+};
 
 // Texto de la dirección del negocio
 const BUSINESS_ADDR =
@@ -126,8 +136,11 @@ type DialogTone = 'info' | 'error' | 'success';
 type OrderItemState = {
   kind: ItemKind;
   qty: number;
-  flavor?: string; // aplica a pollos asados y costillares
-  chickenStyle?: 'asado' | 'rostizado'; // solo pollos
+  flavor?: string; // Nombre del sabor (para compatibilidad)
+  flavorId?: string; // ID del sabor
+  chickenStyle?: string; // Nombre del estilo (asado/rostizado)
+  styleId?: string; // ID del estilo
+  productId?: string; // ID del producto del menú
 };
 
 type InventorySnapshot = {
@@ -213,6 +226,13 @@ function validateInventoryGlobal(
 }
 
 export default function OrdenCliente() {
+  // Cargar datos del menú
+  const { data: menuData, isLoading: loadingMenu } = useSWR<MenuData>(
+    '/api/menu/active',
+    fetcher,
+    { refreshInterval: 30000 } // Refrescar cada 30 segundos
+  );
+
   const [items, setItems] = useState<OrderItemState[]>([]);
   const [delivery, setDelivery] = useState(true);
   const [tortillas, setTortillas] = useState(0);
@@ -229,6 +249,37 @@ export default function OrdenCliente() {
 
   const [inventory, setInventory] = useState<InventorySnapshot | null>(null);
   const [inventoryError, setInventoryError] = useState<string | null>(null);
+
+  // Helpers para obtener datos del menú
+  const getProductByCode = (code: string): MenuProduct | undefined => {
+    return menuData?.products.find((p) => p.code === code && p.isActive);
+  };
+
+  const getFlavorById = (id: string): Flavor | undefined => {
+    return menuData?.flavors.find((f) => f._id === id && f.isActive);
+  };
+
+  const getStyleById = (id: string): Style | undefined => {
+    return menuData?.styles.find((s) => s._id === id && s.isActive);
+  };
+
+  // Obtener el sabor "Sinaloa (Natural)" como default
+  const getDefaultFlavor = (): Flavor | undefined => {
+    return menuData?.flavors.find(
+      (f) => f.isActive && f.name.toLowerCase().includes('sinaloa')
+    ) || menuData?.flavors.find((f) => f.isActive && f.name.toLowerCase().includes('natural'))
+    || menuData?.flavors.find((f) => f.isActive);
+  };
+
+  // Productos activos para mostrar (excluyendo solo en tienda si es delivery)
+  const availableProducts = useMemo(() => {
+    if (!menuData) return [];
+    return menuData.products.filter((p) => {
+      if (!p.isActive) return false;
+      if (delivery && p.showOnlyInStore) return false; // No mostrar productos solo en tienda para delivery
+      return true;
+    });
+  }, [menuData, delivery]);
 
   // ---- estado para modal bonito ----
   const [dialog, setDialog] = useState<{
@@ -307,31 +358,68 @@ export default function OrdenCliente() {
   const deliveryOk = canDeliver(items);
 
   const total = useMemo(() => {
-    if (!hasItems) return 0;
-    const sub = items.reduce((a, b) => a + BASE[b.kind] * b.qty, 0);
+    if (!hasItems || !menuData) return 0;
+    
+    let sub = 0;
+    for (const item of items) {
+      const product = getProductByCode(item.kind);
+      if (!product) continue;
+      
+      let itemPrice = product.price;
+      
+      // Agregar precio del sabor si existe
+      if (item.flavorId) {
+        const flavor = getFlavorById(item.flavorId);
+        if (flavor) {
+          itemPrice += flavor.price;
+        }
+      }
+      
+      sub += itemPrice * item.qty;
+    }
+    
     const surcharge = delivery && deliveryOk ? 20 : 0; // +$20 por pedido
     return sub + surcharge + tortillas * 10;
-  }, [items, delivery, deliveryOk, tortillas, hasItems]);
+  }, [items, delivery, deliveryOk, tortillas, hasItems, menuData]);
 
   // Añadir producto respetando inventario
   function add(kind: ItemKind) {
-    setItems((current) => {
-      const isChicken = kind === 'pollo' || kind === 'medio_pollo';
-      const isRib =
-        kind === 'costillar_medio' ||
-        kind === 'costillar_normal' ||
-        kind === 'costillar_grande';
+    if (!menuData) return;
+    
+    const product = getProductByCode(kind);
+    if (!product) return;
 
+    setItems((current) => {
       const base: OrderItemState = {
         kind,
         qty: 1,
+        productId: product._id,
       };
 
-      if (isChicken) {
-        base.chickenStyle = 'asado';
+      // Si tiene estilos disponibles (pollos), usar el primero ACTIVO (siempre requerido)
+      const activeStyles = product.availableStyles
+        .map((s) => menuData?.styles.find((st) => st._id === s._id))
+        .filter((s): s is Style => s !== undefined && s.isActive);
+      
+      if (activeStyles.length > 0) {
+        const firstStyle = activeStyles[0];
+        base.chickenStyle = firstStyle.name;
+        base.styleId = firstStyle._id;
       }
-      if (isChicken || isRib) {
-        base.flavor = FLAVORS[0];
+
+      // Si tiene sabores disponibles, usar "Sinaloa (Natural)" o el primero ACTIVO
+      const activeFlavors = product.availableFlavors
+        .map((f) => menuData?.flavors.find((fl) => fl._id === f._id))
+        .filter((f): f is Flavor => f !== undefined && f.isActive);
+      
+      if (activeFlavors.length > 0) {
+        // Buscar "Sinaloa (Natural)" primero, si no existe usar el primero
+        const sinaloaFlavor = activeFlavors.find(
+          (f) => f.name.toLowerCase().includes('sinaloa') || f.name.toLowerCase().includes('natural')
+        ) || activeFlavors[0];
+        
+        base.flavor = sinaloaFlavor.name;
+        base.flavorId = sinaloaFlavor._id;
       }
 
       const next = [base, ...current];
@@ -387,6 +475,66 @@ export default function OrdenCliente() {
       setMsg(null);
     }
   }, [delivery, deliveryOk]);
+
+  // Asegurar que siempre haya sabor y estilo seleccionados cuando se actualiza el menú
+  useEffect(() => {
+    if (!menuData) return;
+    
+    setItems((current) =>
+      current.map((item) => {
+        const product = getProductByCode(item.kind);
+        if (!product) return item;
+
+        let updated = { ...item };
+        const isChicken = product.availableStyles.length > 0;
+        
+        // Obtener sabores y estilos disponibles (solo activos)
+        const availableFlavors = product.availableFlavors
+          .map((f) => menuData.flavors.find((fl) => fl._id === f._id))
+          .filter((f): f is Flavor => f !== undefined && f.isActive);
+        
+        const availableStyles = product.availableStyles
+          .map((s) => menuData.styles.find((st) => st._id === s._id))
+          .filter((s): s is Style => s !== undefined && s.isActive);
+
+        // Asegurar estilo seleccionado para pollos
+        if (isChicken) {
+          const currentStyle = item.styleId ? getStyleById(item.styleId) : null;
+          if (!currentStyle && availableStyles.length > 0) {
+            updated.styleId = availableStyles[0]._id;
+            updated.chickenStyle = availableStyles[0].name;
+          }
+        }
+
+        // Determinar si el estilo actual es "asado"
+        const updatedStyle = updated.styleId ? getStyleById(updated.styleId) : null;
+        const isAsado = updatedStyle?.name === 'asado';
+        const defaultFlavor = getDefaultFlavor();
+
+        // Asegurar sabor seleccionado
+        const currentFlavor = updated.flavorId ? getFlavorById(updated.flavorId) : null;
+        
+        if (!currentFlavor) {
+          // No hay sabor seleccionado, usar default
+          if (defaultFlavor && availableFlavors.some((f) => f._id === defaultFlavor._id)) {
+            updated.flavorId = defaultFlavor._id;
+            updated.flavor = defaultFlavor.name;
+          } else if (availableFlavors.length > 0) {
+            updated.flavorId = availableFlavors[0]._id;
+            updated.flavor = availableFlavors[0].name;
+          }
+        } else if (!isAsado) {
+          // Si el estilo no es "asado", forzar "Sinaloa (Natural)"
+          if (defaultFlavor && availableFlavors.some((f) => f._id === defaultFlavor._id)) {
+            updated.flavorId = defaultFlavor._id;
+            updated.flavor = defaultFlavor.name;
+          }
+        }
+        
+        return updated;
+      })
+    );
+  }, [menuData]);
 
   // ---------- VALIDACIONES EN DOS FASES ----------
 
@@ -464,12 +612,24 @@ export default function OrdenCliente() {
     }
 
     const wantDelivery = mode === 'delivery';
+    
+    // Preparar items con IDs para el backend
+    const itemsForSubmit = items.map((item) => ({
+      kind: item.kind,
+      qty: item.qty,
+      flavor: item.flavor, // Mantener para compatibilidad
+      flavorId: item.flavorId,
+      chickenStyle: item.chickenStyle, // Mantener para compatibilidad
+      styleId: item.styleId,
+      productId: item.productId,
+    }));
+    
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         source: 'cliente',
-        items,
+        items: itemsForSubmit,
         delivery: wantDelivery,
         tortillasPacks: tortillas,
         customer: {
@@ -676,114 +836,59 @@ export default function OrdenCliente() {
             </span>
           </header>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {/* Pollo y medio pollo solo si hay stock de pollo crudo */}
-            {(!inventory || !noPollo) && (
-              <button
-                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-                onClick={() => add('pollo')}
-                disabled={pedidosCerrados}
-              >
-                <div>
-                  <div className="text-xs text-amber-300 mb-1">
-                    Más pedido
-                  </div>
-                  <div className="font-semibold">Pollo completo</div>
-                  <div className="text-xs text-zinc-400 mt-1">
-                    Ideal para familia o compartir.
-                  </div>
-                </div>
-                <div className="mt-3 text-[11px] text-zinc-400">
-                  $200 pickup • +$20 envío (por pedido)
-                </div>
-              </button>
-            )}
+          {loadingMenu ? (
+            <div className="text-center py-8 text-zinc-400">
+              <p>Cargando productos del menú...</p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {availableProducts.map((product) => {
+                  // Verificar stock según tipo de producto
+                  const isChicken = product.code === 'pollo' || product.code === 'medio_pollo';
+                  const isRibNormal = product.code === 'costillar_medio' || product.code === 'costillar_normal';
+                  const isRibGrande = product.code === 'costillar_grande';
+                  
+                  const hideByStock =
+                    (isChicken && inventory && noPollo) ||
+                    (isRibNormal && inventory && noCostillarNormal) ||
+                    (isRibGrande && inventory && noCostillarGrande);
 
-            {(!inventory || !noPollo) && (
-              <button
-                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-                onClick={() => add('medio_pollo')}
-                disabled={pedidosCerrados}
-              >
-                <div>
-                  <div className="font-semibold">1/2 Pollo</div>
-                  <div className="text-xs text-zinc-400 mt-1">
-                    Para antojo individual o compartir ligero.
-                  </div>
-                </div>
-                <div className="mt-3 text-[11px] text-zinc-400">
-                  $100 pickup
-                </div>
-              </button>
-            )}
+                  if (hideByStock) return null;
 
-            {/* Costillar medio / normal según stock base de costillar_normal */}
-            {(!inventory || !noCostillarNormal) && (
-              <button
-                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-                onClick={() => add('costillar_medio')}
-                disabled={pedidosCerrados}
-              >
-                <div>
-                  <div className="font-semibold">1/2 Costillar</div>
-                  <div className="text-xs text-zinc-400 mt-1">
-                    Costillas a la leña para una o dos personas.
-                  </div>
-                </div>
-                <div className="mt-3 text-[11px] text-zinc-400">
-                  $100 pickup
-                </div>
-              </button>
-            )}
+                  return (
+                    <button
+                      key={product._id}
+                      className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
+                      onClick={() => add(product.code)}
+                      disabled={pedidosCerrados}
+                    >
+                      <div>
+                        {product.showOnlyInStore && (
+                          <div className="text-xs text-orange-300 mb-1">
+                            ⚠️ Solo en tienda
+                          </div>
+                        )}
+                        <div className="font-semibold">{product.name}</div>
+                        <div className="text-xs text-zinc-400 mt-1">
+                          {product.description || 'Delicioso producto a la leña.'}
+                        </div>
+                      </div>
+                      <div className="mt-3 text-[11px] text-zinc-400">
+                        ${product.price} pickup
+                        {!product.showOnlyInStore && ' • +$20 envío (por pedido)'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
 
-            {(!inventory || !noCostillarNormal) && (
-              <button
-                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-                onClick={() => add('costillar_normal')}
-                disabled={pedidosCerrados}
-              >
-                <div>
-                  <div className="text-xs text-amber-300 mb-1">
-                    Recomendado
-                  </div>
-                  <div className="font-semibold">Costillar</div>
-                  <div className="text-xs text-zinc-400 mt-1">
-                    Costillas en su punto, perfectas para compartir.
-                  </div>
-                </div>
-                <div className="mt-3 text-[11px] text-zinc-400">
-                  $200 pickup • +$20 envío (por pedido)
-                </div>
-              </button>
-            )}
-
-            {/* Costillar grande según stock costillar_grande */}
-            {(!inventory || !noCostillarGrande) && (
-              <button
-                className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-                onClick={() => add('costillar_grande')}
-                disabled={pedidosCerrados}
-              >
-                <div>
-                  <div className="text-xs text-emerald-300 mb-1">
-                    Para varios
-                  </div>
-                  <div className="font-semibold">Costillar Grande</div>
-                  <div className="text-xs text-zinc-400 mt-1">
-                    Porción generosa para varios comensales.
-                  </div>
-                </div>
-                <div className="mt-3 text-[11px] text-zinc-400">
-                  $250–$300 pickup • +$20 envío (por pedido)
-                </div>
-              </button>
-            )}
-          </div>
-
-          {inventory && noPollo && noCostillarNormal && noCostillarGrande && (
-            <p className="text-xs text-red-300">
-              No hay stock disponible de pollos ni costillares en este momento.
-            </p>
+              {inventory && noPollo && noCostillarNormal && noCostillarGrande && (
+                <p className="text-xs text-red-300">
+                  No hay stock disponible de pollos ni costillares en este momento.
+                </p>
+              )}
+            </>
           )}
         </section>
 
@@ -811,11 +916,38 @@ export default function OrdenCliente() {
           )}
 
           {items.map((it, idx) => {
-            const isChicken = it.kind === 'pollo' || it.kind === 'medio_pollo';
-            const isRib =
-              it.kind === 'costillar_medio' ||
-              it.kind === 'costillar_normal' ||
-              it.kind === 'costillar_grande';
+            const product = getProductByCode(it.kind);
+            if (!product) return null;
+
+            const isChicken = product.availableStyles.length > 0;
+            const isRib = product.availableFlavors.length > 0 && !isChicken;
+
+            // Obtener sabores y estilos disponibles para este producto (solo activos)
+            // Filtrar por isActive usando los datos completos del menú
+            const availableFlavors = product.availableFlavors
+              .map((f) => menuData?.flavors.find((fl) => fl._id === f._id))
+              .filter((f): f is Flavor => f !== undefined && f.isActive);
+            
+            const availableStyles = product.availableStyles
+              .map((s) => menuData?.styles.find((st) => st._id === s._id))
+              .filter((s): s is Style => s !== undefined && s.isActive);
+
+            // Determinar el estilo actual y si es "asado"
+            const currentStyle = it.styleId ? getStyleById(it.styleId) : null;
+            const isAsado = currentStyle?.name === 'asado';
+
+            // Calcular precio de la línea
+            let linePrice = product.price;
+            if (it.flavorId) {
+              const flavor = getFlavorById(it.flavorId);
+              if (flavor) linePrice += flavor.price;
+            }
+            linePrice *= it.qty;
+
+            // Obtener nombre del estilo
+            const styleName = it.styleId
+              ? getStyleById(it.styleId)?.displayName || it.chickenStyle
+              : it.chickenStyle;
 
             return (
               <div
@@ -829,62 +961,78 @@ export default function OrdenCliente() {
               >
                 {/* Descripción item */}
                 <div className="space-y-1">
-                  <div className="font-semibold capitalize">
-                    {it.kind.replace('_', ' ')}
-                  </div>
-                  {isChicken && (
+                  <div className="font-semibold">{product.name}</div>
+                  {isChicken && styleName && (
                     <div className="text-[11px] text-zinc-400">
-                      {it.chickenStyle === 'asado'
-                        ? `Asado • ${it.flavor ?? FLAVORS[0]}`
-                        : 'Rostizado'}
+                      {styleName === 'asado' || styleName === 'Asado'
+                        ? `Asado • ${it.flavor || 'Sinaloa (Natural)'}`
+                        : `${styleName} • Sinaloa (Natural)`}
                     </div>
                   )}
                 </div>
 
                 {/* Sabor */}
-                {isChicken ? (
+                {isChicken && availableFlavors.length > 0 ? (
                   <div>
                     <label className="text-[11px] text-zinc-400">
-                      Sabor {it.chickenStyle !== 'asado' && '(solo en asado)'}
+                      Sabor {!isAsado && '(solo en asado)'}
                     </label>
                     <select
                       className="input w-full mt-1 disabled:opacity-50"
-                      disabled={it.chickenStyle !== 'asado'}
-                      value={it.flavor ?? FLAVORS[0]}
-                      onChange={(e) =>
-                        setItems((s) =>
-                          s.map((x, i) =>
-                            i === idx ? { ...x, flavor: e.target.value } : x
-                          )
-                        )
-                      }
+                      disabled={!isAsado}
+                      value={it.flavorId || ''}
+                      onChange={(e) => {
+                        const flavorId = e.target.value;
+                        const flavor = getFlavorById(flavorId);
+                        if (flavor) {
+                          setItems((s) =>
+                            s.map((x, i) =>
+                              i === idx
+                                ? {
+                                    ...x,
+                                    flavorId: flavorId,
+                                    flavor: flavor.name,
+                                  }
+                                : x
+                            )
+                          );
+                        }
+                      }}
                     >
-                      {FLAVORS.map((f) => (
-                        <option key={f} value={f}>
-                          {f}
+                      {availableFlavors.map((f) => (
+                        <option key={f._id} value={f._id}>
+                          {f.name} {f.price > 0 ? `(+$${f.price})` : ''}
                         </option>
                       ))}
                     </select>
                   </div>
-                ) : isRib ? (
+                ) : isRib && availableFlavors.length > 0 ? (
                   <div>
-                    <label className="text-[11px] text-zinc-400">
-                      Sabor
-                    </label>
+                    <label className="text-[11px] text-zinc-400">Sabor</label>
                     <select
                       className="input w-full mt-1"
-                      value={it.flavor ?? FLAVORS[0]}
-                      onChange={(e) =>
-                        setItems((s) =>
-                          s.map((x, i) =>
-                            i === idx ? { ...x, flavor: e.target.value } : x
-                          )
-                        )
-                      }
+                      value={it.flavorId || ''}
+                      onChange={(e) => {
+                        const flavorId = e.target.value;
+                        const flavor = getFlavorById(flavorId);
+                        if (flavor) {
+                          setItems((s) =>
+                            s.map((x, i) =>
+                              i === idx
+                                ? {
+                                    ...x,
+                                    flavorId: flavorId,
+                                    flavor: flavor.name,
+                                  }
+                                : x
+                            )
+                          );
+                        }
+                      }}
                     >
-                      {FLAVORS.map((f) => (
-                        <option key={f} value={f}>
-                          {f}
+                      {availableFlavors.map((f) => (
+                        <option key={f._id} value={f._id}>
+                          {f.name} {f.price > 0 ? `(+$${f.price})` : ''}
                         </option>
                       ))}
                     </select>
@@ -894,38 +1042,50 @@ export default function OrdenCliente() {
                 )}
 
                 {/* Preparación (pollo y medio_pollo) */}
-                {isChicken && (
+                {isChicken && availableStyles.length > 0 && (
                   <div>
-                    <label className="text-[11px] text-zinc-400">
-                      Preparación
-                    </label>
+                    <label className="text-[11px] text-zinc-400">Preparación</label>
                     <select
                       className="input w-full mt-1"
-                      value={it.chickenStyle}
-                      onChange={(e) =>
-                        setItems((s) =>
-                          s.map((x, i) => {
-                            if (i !== idx) return x;
-                            const nextStyle = e.target
-                              .value as 'asado' | 'rostizado';
-                            return nextStyle === 'asado'
-                              ? {
+                      value={it.styleId || ''}
+                      onChange={(e) => {
+                        const styleId = e.target.value;
+                        const style = getStyleById(styleId);
+                        if (style) {
+                          const isAsado = style.name === 'asado';
+                          const defaultFlavor = getDefaultFlavor();
+                          
+                          setItems((s) =>
+                            s.map((x, i) => {
+                              if (i !== idx) return x;
+                              
+                              // Si cambia a un estilo que no es "asado", usar "Sinaloa (Natural)"
+                              if (!isAsado && defaultFlavor && availableFlavors.some((f) => f._id === defaultFlavor._id)) {
+                                return {
                                   ...x,
-                                  chickenStyle: nextStyle,
-                                  flavor: x.flavor ?? FLAVORS[0],
-                                }
-                              : {
-                                  ...x,
-                                  chickenStyle: nextStyle,
-                                  flavor: undefined,
+                                  styleId: styleId,
+                                  chickenStyle: style.name,
+                                  flavorId: defaultFlavor._id,
+                                  flavor: defaultFlavor.name,
                                 };
-                          })
-                        )
-                      }
+                              }
+                              
+                              // Si cambia a "asado", mantener el sabor actual o usar el default
+                              return {
+                                ...x,
+                                styleId: styleId,
+                                chickenStyle: style.name,
+                                flavorId: x.flavorId || (defaultFlavor?._id || ''),
+                                flavor: x.flavor || (defaultFlavor?.name || ''),
+                              };
+                            })
+                          );
+                        }
+                      }}
                     >
-                      {CHICKEN_STYLE.map((f) => (
-                        <option key={f} value={f}>
-                          {f}
+                      {availableStyles.map((s) => (
+                        <option key={s._id} value={s._id}>
+                          {s.displayName}
                         </option>
                       ))}
                     </select>
@@ -934,7 +1094,7 @@ export default function OrdenCliente() {
 
                 {/* Precio línea */}
                 <div className="text-right font-semibold text-zinc-100">
-                  ${BASE[it.kind] * it.qty}
+                  ${linePrice}
                 </div>
 
                 {/* Controles cantidad + quitar */}

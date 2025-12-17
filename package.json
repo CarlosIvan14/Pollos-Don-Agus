@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed": "ts-node -O \"{\\\"module\\\":\\\"commonjs\\\"}\" scripts/seed.ts"
+    "seed": "ts-node -O \"{\\\"module\\\":\\\"commonjs\\\"}\" scripts/seed.ts",
+    "seed-menu": "ts-node -O \"{\\\"module\\\":\\\"commonjs\\\"}\" scripts/seed-menu.ts"
   },
   "dependencies": {
     "autoprefixer": "10.4.20",
