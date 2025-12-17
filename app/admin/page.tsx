@@ -60,9 +60,22 @@ function categoryLabel(cat: string) {
 }
 
 function AdminInner() {
-  const { data: orders } = useSWR<Order[]>('/api/orders', fetcher, {
-    refreshInterval: 5000,
-  });
+  // Fecha escrita en el input (formato YYYY-MM-DD)
+  const [dateInput, setDateInput] = useState<string>('');
+  // Fecha aplicada para la consulta
+  const [selectedDate, setSelectedDate] = useState<string>('');
+
+  // Construir URL de la API con parámetro de fecha solo si hay fecha aplicada
+  const ordersUrl = selectedDate ? `/api/orders?date=${selectedDate}` : null;
+
+  // Solo cargar pedidos si hay fecha aplicada
+  const { data: orders, isLoading: loadingOrders } = useSWR<Order[]>(
+    ordersUrl,
+    fetcher,
+    {
+      refreshInterval: selectedDate ? 5000 : 0, // Solo refrescar si hay fecha aplicada
+    }
+  );
 
   const {
     data: products,
@@ -458,51 +471,122 @@ function AdminInner() {
 
       {/* 🧾 Pedidos recientes (ahora abajo) */}
       <section className="card">
-        <h2 className="text-xl font-semibold">Pedidos recientes</h2>
-        <div className="grid gap-2 mt-3">
-          {/* Encabezados de columnas */}
-          <div className="hidden md:grid md:grid-cols-7 px-3 pb-1 text-xs text-zinc-500 border-b border-zinc-800">
-            <div>Hora</div>
-            <div>Origen</div>
-            <div>Tipo</div>
-            <div>Detalle</div>
-            <div>Total</div>
-            <div>Teléfono</div>
-            <div>Hora deseada</div>
-          </div>
-          {(orders || []).map((o: any) => (
-            <div
-              key={o._id}
-              className="grid md:grid-cols-7 gap-2 items-center bg-black/20 rounded-xl p-3"
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xl font-semibold">Pedidos por fecha</h2>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-zinc-300 font-medium">
+              Selecciona una fecha:
+            </label>
+            <input
+              type="date"
+              value={dateInput}
+              onChange={(e) => setDateInput(e.target.value)}
+              className="input bg-black/40 text-sm"
+              max={new Date().toISOString().split('T')[0]} // No permitir fechas futuras
+            />
+            <button
+              type="button"
+              onClick={() => setSelectedDate(dateInput)}
+              disabled={!dateInput || dateInput === selectedDate}
+              className="px-3 py-1.5 text-xs rounded-lg bg-emerald-600 disabled:bg-zinc-700 disabled:text-zinc-400 hover:bg-emerald-500 transition"
             >
-              <div className="font-semibold">
-                {new Date(o.createdAt).toLocaleTimeString('es-MX', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                })}
-              </div>
-              <div className="text-sm capitalize">{o.source}</div>
-              <div className="text-sm">
-                {o.delivery ? 'Domicilio' : 'Local'}
-              </div>
-              <div className="text-sm">
-                {o.items.map((it: any) => `${it.qty}x ${it.kind}`).join(', ')}
-              </div>
-              <div className="font-bold">${o.total}</div>
-              <div className="text-sm">{o.customer?.phone || '-'}</div>
-              <div className="text-xs md:text-sm font-medium text-amber-300">
-                {o.customer?.desiredAt
-                  ? new Date(o.customer.desiredAt).toLocaleTimeString('es-MX', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: true,
-                    })
-                  : '—'}
-              </div>
-            </div>
-          ))}
+              Aplicar
+            </button>
+            {selectedDate && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDateInput('');
+                  setSelectedDate('');
+                }}
+                className="px-3 py-1.5 text-xs rounded-lg bg-zinc-700 hover:bg-zinc-600 transition"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
         </div>
+
+        {!selectedDate ? (
+          <div className="text-center py-12 text-zinc-400">
+            <p className="text-lg mb-2">Selecciona una fecha para ver los pedidos</p>
+            <p className="text-sm">
+              Elige una fecha en el selector de arriba para cargar los pedidos de ese día.
+            </p>
+          </div>
+        ) : loadingOrders ? (
+          <div className="text-center py-8 text-zinc-400">
+            <p>Cargando pedidos del {new Date(selectedDate).toLocaleDateString('es-MX', {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            })}...</p>
+          </div>
+        ) : !orders || orders.length === 0 ? (
+          <div className="text-center py-8 text-zinc-400">
+            <p>No hay pedidos registrados para el {new Date(selectedDate).toLocaleDateString('es-MX', {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            })}.</p>
+          </div>
+        ) : (
+          <div className="grid gap-2 mt-3">
+            <div className="mb-2 text-sm text-zinc-400">
+              {orders.length} pedido(s) encontrado(s) para el{' '}
+              {new Date(selectedDate).toLocaleDateString('es-MX', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              })}
+            </div>
+            {/* Encabezados de columnas */}
+            <div className="hidden md:grid md:grid-cols-7 px-3 pb-1 text-xs text-zinc-500 border-b border-zinc-800">
+              <div>Hora</div>
+              <div>Origen</div>
+              <div>Tipo</div>
+              <div>Detalle</div>
+              <div>Total</div>
+              <div>Teléfono</div>
+              <div>Hora deseada</div>
+            </div>
+            {orders.map((o: any) => (
+              <div
+                key={o._id}
+                className="grid md:grid-cols-7 gap-2 items-center bg-black/20 rounded-xl p-3"
+              >
+                <div className="font-semibold">
+                  {new Date(o.createdAt).toLocaleTimeString('es-MX', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </div>
+                <div className="text-sm capitalize">{o.source}</div>
+                <div className="text-sm">
+                  {o.delivery ? 'Domicilio' : 'Local'}
+                </div>
+                <div className="text-sm">
+                  {o.items.map((it: any) => `${it.qty}x ${it.kind}`).join(', ')}
+                </div>
+                <div className="font-bold">${o.total}</div>
+                <div className="text-sm">{o.customer?.phone || '-'}</div>
+                <div className="text-xs md:text-sm font-medium text-amber-300">
+                  {o.customer?.desiredAt
+                    ? new Date(o.customer.desiredAt).toLocaleTimeString('es-MX', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: true,
+                      })
+                    : '—'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );

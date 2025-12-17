@@ -13,10 +13,32 @@ function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     await dbConnect();
-    const list = await Order.find().sort({ createdAt: -1 }).limit(100).lean();
+    
+    // Obtener parámetro de fecha de la query string
+    const { searchParams } = new URL(req.url);
+    const dateParam = searchParams.get('date');
+    
+    let query: any = {};
+    
+    // Si hay fecha, filtrar por ese día
+    if (dateParam) {
+      // Parsear la fecha directamente desde YYYY-MM-DD para evitar problemas de zona horaria
+      const [year, month, day] = dateParam.split('-').map(Number);
+      
+      // Crear fechas en UTC para el inicio y fin del día seleccionado
+      const startOfDay = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+      const endOfDay = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+      
+      query.createdAt = {
+        $gte: startOfDay,
+        $lte: endOfDay,
+      };
+    }
+    
+    const list = await Order.find(query).sort({ createdAt: -1 }).limit(100).lean();
     return NextResponse.json(list, { status: 200 });
   } catch (err: any) {
     console.error('GET /api/orders error:', err);
