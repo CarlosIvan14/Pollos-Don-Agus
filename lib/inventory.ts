@@ -7,12 +7,12 @@ import type { OrderItem } from './pricing';
  * cuántas unidades vamos a descontar.
  *
  * IMPORTANTE:
- *  - Debes tener productos en la BD con estos codes:
+ *  - En la DB hay productos con estos codes:
  *      - "pollo"             → pollos crudos (en piezas)
  *      - "costillar_normal"  → costillar normal crudo
  *      - "costillar_grande"  → costillar grande crudo
  *
- *  - Ajusta los codes si en tu BD usaste otros (ej. "pollo_crudo").
+ * 
  */
 function buildConsumptionMap(items: OrderItem[]): Record<string, number> {
   const map: Record<string, number> = {};

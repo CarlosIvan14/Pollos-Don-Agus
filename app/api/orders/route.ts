@@ -4,7 +4,7 @@ import { dbConnect } from '@/lib/db';
 import Order from '@/models/Order';
 import { broadcast } from '@/lib/sse';
 import { orderTotal, canDeliver, OrderItem } from '@/lib/pricing';
-import { aplicarInventarioParaOrden } from '@/lib/inventory'; // ⬅️ NUEVO
+import { aplicarInventarioParaOrden } from '@/lib/inventory'; 
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

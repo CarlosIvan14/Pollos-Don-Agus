@@ -16,7 +16,7 @@ export type PricingInput = {
 export const DELIVERY_SURCHARGE_PER_ORDER = 20;
 export const TORTILLAS_PRICE_PER_PACK = 10;
 
-// Cache para productos (se puede mejorar con Redis en producción)
+// Cache para productos 
 let productsCache: Map<string, { price: number; updatedAt: number }> = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
