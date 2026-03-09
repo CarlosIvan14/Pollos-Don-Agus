@@ -1,5 +1,8 @@
 // app/menu/page.tsx
-import Image from 'next/image';
+"use client";
+
+import Image from "next/image";
+import { useLanguage } from "@/lib/useLanguage";
 
 type MenuItem = {
   id: string;
@@ -9,117 +12,96 @@ type MenuItem = {
   imageSrc: string;
   badges?: string[];
   note?: string;
-  disableOrder?: boolean; // <-- Para quitar botón de pedir
+  disableOrder?: boolean;
 };
 
-const MENU_ITEMS: MenuItem[] = [
-  {
-    id: 'pollo-completo',
-    name: 'Pollo completo',
-    description:
-      'Pollo entero asado o rostizado, ideal para compartir en familia. Acompáñalo con el sabor que prefieras.',
-    priceLabel: '$200',
-    imageSrc: '/menu/pollo-completo.png',
-    badges: ['Más pedido', 'Asado / Rostizado'],
-  },
-  {
-    id: 'medio-pollo',
-    name: '1/2 Pollo',
-    description:
-      'Perfecto para un antojo individual o para compartir ligero. Sabor clásico de la casa.',
-    priceLabel: '$100',
-    imageSrc: '/menu/medio-pollo.png',
-    badges: ['Asado / Rostizado'],
-  },
-  {
-    id: 'costillar-medio',
-    name: '1/2 Costillar',
-    description:
-      'Media orden de costillas a la leña, jugosas con el toque ahumado característico.',
-    priceLabel: '$100',
-    imageSrc: '/menu/medio-costillar.png',
-    badges: ['Costillas a la leña'],
-  },
-  {
-    id: 'costillar-normal',
-    name: 'Costillar',
-    description:
-      'Costillas completas, cocinadas a la leña con tu sabor preferido. Ideal para compartir.',
-    priceLabel: '$200',
-    imageSrc: '/menu/costillar.png',
-    badges: ['Recomendado', 'Costillas a la leña'],
-  },
-  {
-    id: 'costillar-grande',
-    name: 'Costillar grande',
-    description:
-      'Porción abundante de costillas a la leña para varios comensales. Perfecto para reuniones.',
-    priceLabel: '$250–$300',
-    imageSrc: '/menu/costillar-grande.png',
-    badges: ['Para varios', 'Costillas a la leña'],
-  },
-  {
-    id: 'tortillas-extra',
-    name: 'Tortillas extra',
-    description:
-      'Paquete de tortillas para acompañar tus pollos y costillares. Nunca vienen de sobra.',
-    priceLabel: '$10 por paquete',
-    imageSrc: '/menu/tortillas.png',
-  },
-  {
-    id: 'pescuezos',
-    name: 'Pescuezos',
-    description:
-      'Orden de 5 pescuezos con sazón de la casa. Ideales como botana o complemento.',
-    priceLabel: '$10 (5 pescuezos)',
-    imageSrc: '/menu/pescuezos.png',
-    badges: ['Solo sucursal'],
-    note: 'Disponible solo en sucursal y únicamente algunos días. Sujeto a disponibilidad.',
-    disableOrder: true,
-  },
-  {
-    id: 'salchichas',
-    name: 'Salchichas',
-    description:
-      'Orden de 5 salchichas doraditas, perfectas para acompañar tu comida.',
-    priceLabel: '$10 (5 salchichas)',
-    imageSrc: '/menu/salchichas.png',
-    badges: ['Solo sucursal'],
-    note: 'Disponible solo en sucursal y únicamente algunos días. Sujeto a disponibilidad.',
-    disableOrder: true,
-  },
-  {
-    id: 'lechon',
-    name: 'Lechón',
-    description:
-      'Preparación especial de lechón para eventos y pedidos grandes. Cocción tradicional.',
-    priceLabel: 'Precio variable',
-    imageSrc: '/menu/lechon.png',
-    badges: ['Pedido especial'],
-    note:
-      'Disponible solo bajo pedido anticipado. Contáctanos al 4381356612 para cotización y fechas.',
-    disableOrder: true,
-  },
-];
-
-const FLAVORS = [
-  'Sinaloa (Natural)',
-  'BBQ',
-  'BBQ Picante',
-  'Juan Gabriel',
-  'Jalapeño',
-  'Chipotle',
-  'Niurka',
-];
-
 export default function MenuPublicPage() {
+  const { t } = useLanguage();
+
+  const MENU_ITEMS: MenuItem[] = [
+    {
+      id: "pollo-completo",
+      name: t.menu.items.polloCompleto.name,
+      description: t.menu.items.polloCompleto.description,
+      priceLabel: "$200",
+      imageSrc: "/menu/pollo-completo.png",
+      badges: t.menu.items.polloCompleto.badges,
+    },
+    {
+      id: "medio-pollo",
+      name: t.menu.items.medioPollo.name,
+      description: t.menu.items.medioPollo.description,
+      priceLabel: "$100",
+      imageSrc: "/menu/medio-pollo.png",
+      badges: t.menu.items.medioPollo.badges,
+    },
+    {
+      id: "costillar-medio",
+      name: t.menu.items.costillarMedio.name,
+      description: t.menu.items.costillarMedio.description,
+      priceLabel: "$100",
+      imageSrc: "/menu/medio-costillar.png",
+      badges: t.menu.items.costillarMedio.badges,
+    },
+    {
+      id: "costillar-normal",
+      name: t.menu.items.costillarNormal.name,
+      description: t.menu.items.costillarNormal.description,
+      priceLabel: "$200",
+      imageSrc: "/menu/costillar.png",
+      badges: t.menu.items.costillarNormal.badges,
+    },
+    {
+      id: "costillar-grande",
+      name: t.menu.items.costillarGrande.name,
+      description: t.menu.items.costillarGrande.description,
+      priceLabel: "$250–$300",
+      imageSrc: "/menu/costillar-grande.png",
+      badges: t.menu.items.costillarGrande.badges,
+    },
+    {
+      id: "tortillas-extra",
+      name: t.menu.items.tortillasExtra.name,
+      description: t.menu.items.tortillasExtra.description,
+      priceLabel: `$10 ${t.menu.labels.perPack}`,
+      imageSrc: "/menu/tortillas.png",
+    },
+    {
+      id: "pescuezos",
+      name: t.menu.items.pescuezos.name,
+      description: t.menu.items.pescuezos.description,
+      priceLabel: `$10 ${t.menu.labels.perFive}`,
+      imageSrc: "/menu/pescuezos.png",
+      badges: t.menu.items.pescuezos.badges,
+      note: t.menu.items.pescuezos.note,
+      disableOrder: true,
+    },
+    {
+      id: "salchichas",
+      name: t.menu.items.salchichas.name,
+      description: t.menu.items.salchichas.description,
+      priceLabel: `$10 ${t.menu.labels.perFive}`,
+      imageSrc: "/menu/salchichas.png",
+      badges: t.menu.items.salchichas.badges,
+      note: t.menu.items.salchichas.note,
+      disableOrder: true,
+    },
+    {
+      id: "lechon",
+      name: t.menu.items.lechon.name,
+      description: t.menu.items.lechon.description,
+      priceLabel: t.menu.labels.variablePrice,
+      imageSrc: "/menu/lechon.png",
+      badges: t.menu.items.lechon.badges,
+      note: t.menu.items.lechon.note,
+      disableOrder: true,
+    },
+  ];
+
   return (
     <main className="space-y-8 md:space-y-10">
-      
-      {/* Hero */}
       <section className="card bg-gradient-to-r from-amber-800/70 via-zinc-900 to-black border border-amber-500/40 shadow-xl">
         <div className="flex flex-col md:flex-row items-center gap-6">
-          
           <div className="shrink-0 rounded-2xl bg-black/40 p-2 border border-amber-500/40">
             <Image
               src="/logo.png"
@@ -131,20 +113,15 @@ export default function MenuPublicPage() {
           </div>
 
           <div className="flex-1 space-y-3 text-center md:text-left">
-            <h1 className="text-3xl md:text-4xl font-semibold">
-              Menú digital · Pollos Don Agus
-            </h1>
+            <h1 className="text-3xl md:text-4xl font-semibold">{t.menu.title}</h1>
 
-            <p className="text-sm md:text-base text-zinc-300">
-              Pollos asados, costillares a la leña, botanas especiales y más.
-              Consulta precios y elige tu próximo antojo.
-            </p>
+            <p className="text-sm md:text-base text-zinc-300">{t.menu.description}</p>
 
             <div className="flex flex-wrap gap-2 justify-center md:justify-start text-[11px] text-zinc-400">
-              <span>🍗 Pollos</span>
-              <span>• 🦴 Costillas</span>
-              <span>• 🔥 Sabores especiales</span>
-              <span>• 🥖 Botanas</span>
+              <span>{t.menu.chips.chicken}</span>
+              <span>• {t.menu.chips.ribs}</span>
+              <span>• {t.menu.chips.flavors}</span>
+              <span>• {t.menu.chips.snacks}</span>
             </div>
 
             <div className="flex justify-center md:justify-start">
@@ -152,30 +129,22 @@ export default function MenuPublicPage() {
                 href="/orden"
                 className="btn px-4 py-2 text-xs md:text-sm bg-amber-600 border-amber-400 hover:bg-amber-500"
               >
-                Hacer pedido en línea
+                {t.menu.ctaOrder}
               </a>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Sabores */}
       <section className="card space-y-2 text-xs md:text-sm text-zinc-300">
-        <h2 className="text-sm md:text-base font-semibold">
-          Sabores disponibles
-        </h2>
-        <p>Pollos asados y costillares pueden prepararse con sabor:</p>
-        <p className="text-[11px] md:text-xs text-zinc-200">
-          {FLAVORS.join(' • ')}
-        </p>
-        <p className="text-[11px] text-zinc-500">
-          * El pollo rostizado se sirve sin sabor extra.
-        </p>
+        <h2 className="text-sm md:text-base font-semibold">{t.menu.flavorsTitle}</h2>
+        <p>{t.menu.flavorsSubtitle}</p>
+        <p className="text-[11px] md:text-xs text-zinc-200">{t.menu.flavorList.join(" • ")}</p>
+        <p className="text-[11px] text-zinc-500">{t.menu.flavorsNote}</p>
       </section>
 
-      {/* Menú Cards */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Nuestros productos</h2>
+        <h2 className="text-lg font-semibold">{t.menu.productsTitle}</h2>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {MENU_ITEMS.map((item) => (
@@ -183,20 +152,12 @@ export default function MenuPublicPage() {
               key={item.id}
               className="card flex flex-col overflow-hidden border border-zinc-800 hover:border-amber-500/70 hover:-translate-y-0.5 transition"
             >
-              {/* Imagen */}
               <div className="relative h-40 w-full overflow-hidden rounded-xl mb-3">
-                <Image
-                  src={item.imageSrc}
-                  alt={item.name}
-                  fill
-                  className="object-cover"
-                />
+                <Image src={item.imageSrc} alt={item.name} fill className="object-cover" />
               </div>
 
-              {/* Contenido */}
               <div className="flex-1 space-y-2">
                 <div className="flex items-start justify-between gap-2">
-                  
                   <div>
                     <h3 className="font-semibold text-base">{item.name}</h3>
                     {item.badges && (
@@ -227,14 +188,13 @@ export default function MenuPublicPage() {
                 )}
               </div>
 
-              {/* Botón — oculto para items especiales */}
               {!item.disableOrder && (
                 <div className="pt-3 flex justify-end">
                   <a
                     href="/orden"
                     className="btn text-[11px] md:text-xs px-4 bg-zinc-900 hover:bg-zinc-800 border-zinc-700"
                   >
-                    Pedir en línea
+                    {t.menu.orderOnline}
                   </a>
                 </div>
               )}

@@ -1,33 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-
-const featuredProducts = [
-  {
-    id: 1,
-    name: "Pollo a la leña completo",
-    description: "Jugoso, dorado y acompañado de papas, salsa y tortillas.",
-    price: "$220 MXN",
-    tag: "Más pedido",
-    image: "/img/foto4.png",
-  },
-  {
-    id: 2,
-    name: "Costillas BBQ a la leña",
-    description: "Costillas suaves con glaseado BBQ especial de la casa.",
-    price: "$180 MXN",
-    tag: "Nuevo",
-    image: "/img/foto3.png",
-  },
-  {
-    id: 3,
-    name: "Combo familiar",
-    description: "Pollo + costillas + guarniciones para compartir en familia.",
-    price: "$420 MXN",
-    tag: "Para compartir",
-    image: "/img/combo.png",
-  },
-];
+import { useLanguage } from "@/lib/useLanguage";
+import { useBusinessConfig } from "@/lib/useBusinessConfig";
 
 const gallery = [
   { id: 1, title: "", image: "/img/foto1.png" },
@@ -36,7 +11,53 @@ const gallery = [
   { id: 4, title: "", image: "/img/foto4.png" },
 ];
 
+const productImages = [
+  "/img/foto4.png",
+  "/img/foto3.png",
+  "/img/combo.png",
+];
+
 export default function Home() {
+  const { t } = useLanguage();
+  const { config } = useBusinessConfig();
+
+  if (!config) {
+    return (
+      <main className="space-y-8">
+        <div className="text-center py-12 text-zinc-400">
+          <p>Cargando configuración...</p>
+        </div>
+      </main>
+    );
+  }
+
+  const featuredProducts = [
+    {
+      id: 1,
+      name: t.home.featured.products.product1.name,
+      description: t.home.featured.products.product1.description,
+      price: "$220 MXN",
+      tag: t.home.featured.products.product1.tag,
+      image: productImages[0],
+    },
+    {
+      id: 2,
+      name: t.home.featured.products.product2.name,
+      description: t.home.featured.products.product2.description,
+      price: "$180 MXN",
+      tag: t.home.featured.products.product2.tag,
+      image: productImages[1],
+    },
+    {
+      id: 3,
+      name: t.home.featured.products.product3.name,
+      description: t.home.featured.products.product3.description,
+      price: "$420 MXN",
+      tag: t.home.featured.products.product3.tag,
+      image: productImages[2],
+    },
+  ];
+
   return (
     <main className="space-y-8">
       {/* HERO */}
@@ -52,8 +73,8 @@ export default function Home() {
               transition={{ duration: 0.4 }}
               className="text-3xl md:text-4xl font-bold tracking-tight"
             >
-              Bienvenido a{" "}
-              <span className="text-amber-400">Pollos Don Agus</span>
+              {t.home.hero.title.split(config.business.name)[0]}
+              <span className="text-amber-400">{config.business.name}</span>
             </motion.h1>
 
             <motion.p
@@ -62,9 +83,7 @@ export default function Home() {
               transition={{ duration: 0.5, delay: 0.05 }}
               className="text-sm md:text-base text-zinc-300 max-w-xl"
             >
-              Haz tu pedido fácil y rápido. Pollo y costillas a la leña,
-              preparados al momento para que los disfrutes en casa o en el
-              restaurante.
+              {config.business.description}
             </motion.p>
 
             <motion.div
@@ -77,14 +96,14 @@ export default function Home() {
                 href="/orden"
                 className="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold bg-amber-500 hover:bg-amber-400 transition shadow-lg shadow-amber-500/30"
               >
-                Hacer pedido ahora
+                {t.home.hero.buttonOrder}
                 <span aria-hidden>🍗</span>
               </a>
               <a
                 href="/menu"
                 className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm border border-zinc-600 hover:border-amber-400 hover:text-amber-200 transition"
               >
-                Ver menú completo
+                {t.home.hero.buttonMenu}
               </a>
             </motion.div>
 
@@ -96,9 +115,9 @@ export default function Home() {
             >
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                Pedidos en línea activos
+                {t.home.hero.onlineActive}
               </div>
-              <div>• Recoge en local • Entrega a domicilio *</div>
+              <div>• {t.home.hero.pickup} • {t.home.hero.delivery}</div>
             </motion.div>
           </div>
 
@@ -123,7 +142,7 @@ export default function Home() {
             </div>
             <div className="absolute -bottom-3 -right-3 bg-zinc-900/90 border border-zinc-700 rounded-xl px-3 py-2 text-[11px] flex items-center gap-2">
               <span className="text-amber-400 text-base">🔥</span>
-              Asado a la leña todos los días
+              {t.home.hero.woodFired}
             </div>
           </motion.div>
         </div>
@@ -141,17 +160,17 @@ export default function Home() {
               <span className="text-2xl" aria-hidden>
                 🧾
               </span>
-              <span>Ordenar</span>
+              <span>{t.home.quickAccess.order}</span>
             </h3>
           </div>
 
           <p className="text-sm text-zinc-400">
-            Haz tu pedido en línea en menos de 1 minuto. Elige pollos, costillas y antojitos.
+            {t.home.quickAccess.orderDesc}
           </p>
 
           <div className="mt-3 flex justify-between items-center text-xs text-zinc-500 group-hover:text-amber-200">
             <span className="flex items-center gap-2">
-              Empezar pedido
+              {t.home.quickAccess.orderCta}
               <span aria-hidden>→</span>
             </span>
           </div>
@@ -167,17 +186,17 @@ export default function Home() {
               <span className="text-2xl" aria-hidden>
                 📋
               </span>
-              <span>Ver menú</span>
+              <span>{t.home.quickAccess.menu}</span>
             </h3>
           </div>
 
           <p className="text-sm text-zinc-400">
-            Explora todos nuestros pollos, costillares, botanas y tortillas antes de ordenar.
+            {t.home.quickAccess.menuDesc}
           </p>
 
           <div className="mt-3 flex justify-between items-center text-xs text-zinc-500 group-hover:text-amber-200">
             <span className="flex items-center gap-2">
-              Ver carta completa
+              {t.home.quickAccess.menuCta}
               <span aria-hidden>→</span>
             </span>
           </div>
@@ -188,16 +207,16 @@ export default function Home() {
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h2 className="text-xl font-semibold">Menú destacado</h2>
+            <h2 className="text-xl font-semibold">{t.home.featured.title}</h2>
             <p className="text-xs text-zinc-400">
-              Elige uno de nuestros favoritos y empieza tu pedido.
+              {t.home.featured.subtitle}
             </p>
           </div>
           <a
             href="/menu"
             className="text-xs text-amber-400 hover:text-amber-300"
           >
-            Ver todo el menú →
+            {t.home.featured.viewAll}
           </a>
         </div>
 
@@ -234,7 +253,7 @@ export default function Home() {
                   {item.price}
                 </span>
                 <span className="text-[11px] text-zinc-400 group-hover:text-amber-200 flex items-center gap-1">
-                  Agregar al pedido
+                  {t.home.featured.addOrder}
                   <span aria-hidden>＋</span>
                 </span>
               </div>
@@ -248,25 +267,23 @@ export default function Home() {
         {/* Texto historia – rediseñado */}
         <div className="card h-full flex flex-col justify-center items-center md:items-start text-center md:text-left py-8 px-6 space-y-4">
           <h2 className="text-2xl md:text-3xl font-semibold">
-            El sabor de casa, a la leña
+            {config.business.tagline}
           </h2>
           <p className="mt-1 text-sm md:text-base text-zinc-300 max-w-2xl leading-relaxed">
-            Pollos Don Agus nació como un negocio familiar para domingos en familia,
-            reuniones con amigos y antojos entre semana. Todo se prepara a la leña,
-            con recetas tradicionales y el toque casero que nos distingue.
+            {config.business.story}
           </p>
 
           <ul className="mt-4 grid gap-2 text-sm text-zinc-200 md:grid-cols-1">
-            <li>• Asado a la leña todos los días</li>
-            <li>• Ingredientes frescos y salsas caseras</li>
-            <li>• Pedidos para llevar, recoger o comer en el local</li>
+            <li>• {t.home.story.features.wood}</li>
+            <li>• {t.home.story.features.ingredients}</li>
+            <li>• {t.home.story.features.delivery}</li>
           </ul>
         </div>
 
         {/* Mapa */}
         <div className="card">
           <h3 className="text-sm font-semibold mb-2">
-            Ubicación del restaurante
+            {t.home.story.location}
           </h3>
 
           <div className="aspect-video rounded-2xl overflow-hidden border border-zinc-700/70 bg-zinc-900">
@@ -274,21 +291,21 @@ export default function Home() {
               className="w-full h-full"
               loading="lazy"
               referrerPolicy="no-referrer-when-downgrade"
-              src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3784.232374731987!2d-101.517!3d20.083!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x842cb537fb0cd0b5%3A0xaed0e5bbd48d304c!2sAltamirano%20216%2C%20Centro%2C%2058500%20Puru%C3%A1ndiro%2C%20Mich.!5e0!3m2!1ses-419!2smx!4v1700000000000!5m2!1ses-419!2smx"
+              src={config.google_maps.embed}
               allowFullScreen
             ></iframe>
           </div>
 
           <p className="mt-2 text-[11px] text-zinc-500">
-            Altamirano #216, Colonia Centro, Puruándiro, Michoacán.
+            {config.business.address}
           </p>
         </div>
       </section>
 
       {/* GALERÍA DEL RESTAURANTE */}
       <section className="space-y-4">
-        <div className="flex items-center justify_between gap-2">
-          <h2 className="text-xl font-semibold">Así se ve nuestro lugar</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-xl font-semibold">{t.home.gallery.title}</h2>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">

@@ -20,6 +20,26 @@ html, body, #__next {
   color: var(--text);
 }
 
+/* Scrollbar moderno */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #b45309;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #f59e0b;
+}
+
 .btn {
   @apply px-4 py-3 rounded-2xl font-semibold bg-brand hover:bg-brand-light active:scale-95 transition select-none;
 }

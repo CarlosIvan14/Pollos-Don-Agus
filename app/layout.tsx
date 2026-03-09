@@ -3,6 +3,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 import Header from './components/Header';
 import AuthSessionProvider from '@/components/auth/SessionProvider';
+import { LanguageProvider } from '@/lib/useLanguage';
 
 export const metadata: Metadata = {
   title: 'Pollos Don Agus - POS & Pedidos',
@@ -13,14 +14,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="es">
       <body>
-        <AuthSessionProvider>
-          <div className="bg-fire min-h-screen">
-            <div className="max-w-6xl mx-auto p-4 md:p-6">
-              <Header />
-              {children}
+        <LanguageProvider>
+          <AuthSessionProvider>
+            <div className="bg-fire min-h-screen">
+              <div className="max-w-6xl mx-auto p-4 md:p-6">
+                <Header />
+                {children}
+              </div>
             </div>
-          </div>
-        </AuthSessionProvider>
+          </AuthSessionProvider>
+        </LanguageProvider>
       </body>
     </html>
   );

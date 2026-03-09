@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic';
 import { Trash2 } from 'lucide-react';
 import useSWR from 'swr';
 import { useInventoryStream } from '@/lib/useInventoryStream';
+import { useLanguage } from '@/lib/useLanguage';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -79,8 +80,8 @@ function todayAt(hour: number, minute = 0) {
   return d;
 }
 function buildTimeSlots(hoursAhead = 8, locale = 'es-MX') {
-  const opening = todayAt(12, 0); // 12:00
-  const closing = todayAt(18, 0); // 18:00
+  const opening = todayAt(10, 0); // 10:00
+  const closing = todayAt(22, 0); // 22:00
   const now = new Date();
 
   if (now >= closing) return []; // horario cerrado
@@ -186,9 +187,21 @@ function getInventoryUsageFromItems(
   return usage;
 }
 
+function interpolate(
+  template: string,
+  params: Record<string, string | number>
+) {
+  let output = template;
+  for (const [key, value] of Object.entries(params)) {
+    output = output.replaceAll(`{${key}}`, String(value));
+  }
+  return output;
+}
+
 function validateInventoryGlobal(
   items: OrderItemState[],
-  inv: InventorySnapshot
+  inv: InventorySnapshot,
+  orderText: any
 ): string | null {
   const usage = getInventoryUsageFromItems(items);
 
@@ -197,18 +210,21 @@ function validateInventoryGlobal(
     const available = (inv as any)[key] ?? 0;
 
     if (used > available) {
-      // Mensajes bonitos solo para los que ya manejas
       if (key === 'pollo') {
-        return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+        return interpolate(orderText.validation.stockPollo, { max: inv.pollo });
       }
       if (key === 'costillar_normal') {
-        return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+        return interpolate(orderText.validation.stockCostillarNormal, {
+          max: inv.costillar_normal,
+        });
       }
       if (key === 'costillar_grande') {
-        return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+        return interpolate(orderText.validation.stockCostillarGrande, {
+          max: inv.costillar_grande,
+        });
       }
 
-      return `No hay suficiente stock para "${key}". Disponible: ${available}. Ajusta la cantidad.`;
+      return interpolate(orderText.validation.stockGeneric, { key, available });
     }
   }
 
@@ -218,7 +234,8 @@ function validateInventoryGlobal(
 function validateInventoryForKind(
   items: OrderItemState[],
   inv: InventorySnapshot,
-  changedKind: ItemKind
+  changedKind: ItemKind,
+  orderText: any
 ): string | null {
   const rules = CONSUMPTION[changedKind] ?? [{ inventoryKey: changedKind, factor: 1 }];
   const usage = getInventoryUsageFromItems(items);
@@ -230,15 +247,19 @@ function validateInventoryForKind(
 
     if (used > available) {
       if (key === 'pollo') {
-        return `El máximo disponible de pollo hoy es ${inv.pollo} pollo(s) crudo(s). Ajusta la cantidad.`;
+        return interpolate(orderText.validation.stockPollo, { max: inv.pollo });
       }
       if (key === 'costillar_normal') {
-        return `El máximo disponible de costillar normal hoy es ${inv.costillar_normal} pieza(s). Ajusta la cantidad.`;
+        return interpolate(orderText.validation.stockCostillarNormal, {
+          max: inv.costillar_normal,
+        });
       }
       if (key === 'costillar_grande') {
-        return `El máximo disponible de costillar grande hoy es ${inv.costillar_grande} pieza(s). Ajusta la cantidad.`;
+        return interpolate(orderText.validation.stockCostillarGrande, {
+          max: inv.costillar_grande,
+        });
       }
-      return `No hay suficiente stock para "${key}". Disponible: ${available}. Ajusta la cantidad.`;
+      return interpolate(orderText.validation.stockGeneric, { key, available });
     }
   }
 
@@ -246,6 +267,8 @@ function validateInventoryForKind(
 }
 
 export default function OrdenCliente() {
+  const { t } = useLanguage();
+
   // Cargar datos del menú
   const { data: menuData, isLoading: loadingMenu } = useSWR<MenuData>(
     '/api/menu/active',
@@ -258,6 +281,8 @@ export default function OrdenCliente() {
   const [tortillas, setTortillas] = useState(0);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [gettingLocation, setGettingLocation] = useState(false);
   const [addressNote, setAddressNote] = useState('');
   const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -299,12 +324,23 @@ export default function OrdenCliente() {
   // Productos activos para mostrar (excluyendo solo en tienda si es delivery)
   const availableProducts = useMemo(() => {
     if (!menuData) return [];
-    return menuData.products.filter((p) => {
+    let filtered = menuData.products.filter((p) => {
       if (!p.isActive) return false;
       if (delivery && p.showOnlyInStore) return false;
       return true;
     });
-  }, [menuData, delivery]);
+
+    // Filtrar por búsqueda
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter((p) =>
+        p.name.toLowerCase().includes(query) ||
+        p.description?.toLowerCase().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [menuData, delivery, searchQuery]);
 
   // ---- estado para modal bonito ----
   const [dialog, setDialog] = useState<{
@@ -448,10 +484,10 @@ export default function OrdenCliente() {
       const next = [base, ...current];
 
       if (inventory) {
-        const err = validateInventoryForKind(next, inventory, kind);
+        const err = validateInventoryForKind(next, inventory, kind, t.order);
         if (err) {
           showDialog({
-            title: 'Sin stock suficiente',
+            title: t.order.stockErrorTitle,
             message: err,
             tone: 'error',
           });
@@ -474,10 +510,10 @@ export default function OrdenCliente() {
       );
 
       if (inventory) {
-        const err = validateInventoryForKind(next, inventory, target.kind);
+        const err = validateInventoryForKind(next, inventory, target.kind, t.order);
         if (err) {
           showDialog({
-            title: 'Sin stock suficiente',
+            title: t.order.stockErrorTitle,
             message: err,
             tone: 'error',
           });
@@ -491,13 +527,11 @@ export default function OrdenCliente() {
 
   useEffect(() => {
     if (delivery && !deliveryOk) {
-      setMsg(
-        'Completa tu orden con un pollo completo, un costillar o 2 medios (pollo o costillar) para poder enviar a domicilio. De lo contrario, confirma como Pick Up.'
-      );
+      setMsg(t.order.deliveryRequirementLong);
     } else {
       setMsg(null);
     }
-  }, [delivery, deliveryOk]);
+  }, [delivery, deliveryOk, t.order.deliveryRequirementLong]);
 
   // Asegurar que siempre haya sabor y estilo seleccionados cuando se actualiza el menú
   useEffect(() => {
@@ -568,15 +602,15 @@ export default function OrdenCliente() {
   // 1) Valida SOLO el pedido (productos + mínimo + stock)
   function validateOrder(baseMode: 'pickup' | 'delivery') {
     const errs: string[] = [];
-    if (!hasItems) errs.push('Agrega al menos un producto a tu pedido.');
+    if (!hasItems) errs.push(t.order.validation.addAtLeastOne);
     if (baseMode === 'delivery' && !deliveryOk) {
-      errs.push('Completa tu pedido para cumplir el mínimo de envío a domicilio.');
+      errs.push(t.order.validation.deliveryMinimum);
     }
     if (pedidosCerrados) {
-      errs.push('El horario de pedidos en línea es de 12:00 pm a 6:00 pm.');
+      errs.push(t.order.validation.onlineHours);
     }
     if (inventory) {
-      const invErr = validateInventoryGlobal(items, inventory);
+      const invErr = validateInventoryGlobal(items, inventory, t.order);
       if (invErr) errs.push(invErr);
     }
     return errs;
@@ -586,16 +620,16 @@ export default function OrdenCliente() {
   function validateCustomer(baseMode: 'pickup' | 'delivery') {
     const errs: string[] = [];
 
-    if (!name.trim()) errs.push('El nombre es obligatorio.');
-    if (!phone.trim()) errs.push('El teléfono es obligatorio.');
+    if (!name.trim()) errs.push(t.order.validation.nameRequired);
+    if (!phone.trim()) errs.push(t.order.validation.phoneRequired);
     else if (!isValidMxPhone(phone))
-      errs.push('Teléfono inválido. Debe tener 10 dígitos en MX.');
-    if (!desiredAt) errs.push('Selecciona un horario.');
+      errs.push(t.order.validation.phoneInvalid);
+    if (!desiredAt) errs.push(t.order.validation.scheduleRequired);
 
     if (baseMode === 'delivery') {
-      if (!geo) errs.push('Selecciona tu ubicación en el mapa.');
-      if (!addressNote.trim()) errs.push('La dirección / referencias es obligatoria.');
-      if (!delivery) errs.push('Activa “Entrega a domicilio”.');
+      if (!geo) errs.push(t.order.validation.mapRequired);
+      if (!addressNote.trim()) errs.push(t.order.validation.addressRequired);
+      if (!delivery) errs.push(t.order.validation.activateDelivery);
     }
 
     return errs;
@@ -607,11 +641,14 @@ export default function OrdenCliente() {
     if (orderErrs.length > 0) {
       setFormErrors(orderErrs);
       showDialog({
-        title: mode === 'delivery' ? 'Completa tu pedido' : 'Agrega productos a tu pedido',
+        title:
+          mode === 'delivery'
+            ? t.order.dialogs.completeOrderTitle
+            : t.order.dialogs.addProductsTitle,
         message:
           mode === 'delivery'
-            ? 'Antes de continuar, completa tu pedido para envío a domicilio (agrega producto, cumple el mínimo o ajusta el stock).'
-            : 'Antes de continuar, agrega al menos un producto y revisa que no sobrepase el stock.',
+            ? t.order.dialogs.completeOrderDeliveryMsg
+            : t.order.dialogs.completeOrderPickupMsg,
         tone: 'error',
       });
       return;
@@ -622,8 +659,8 @@ export default function OrdenCliente() {
     setFormErrors(customerErrs);
     if (customerErrs.length > 0) {
       showDialog({
-        title: 'Revisa tus datos',
-        message: 'Faltan datos obligatorios. Revisa el cuadro rojo de errores antes de confirmar.',
+        title: t.order.dialogs.checkDataTitle,
+        message: t.order.dialogs.checkDataMsg,
         tone: 'error',
       });
       return;
@@ -660,10 +697,10 @@ export default function OrdenCliente() {
 
     if (res.ok) {
       showDialog({
-        title: 'Pedido enviado',
+        title: t.order.orderSent,
         message: wantDelivery
-          ? 'Pedido enviado. Paga en efectivo al recibir.'
-          : 'Pedido para recoger confirmado.',
+          ? t.order.orderSentDesc
+          : t.order.orderConfirmed,
         tone: 'success',
         onClose: () => {
           window.location.href = '/';
@@ -672,8 +709,8 @@ export default function OrdenCliente() {
     } else {
       const j = await res.json();
       showDialog({
-        title: 'Error',
-        message: j.error || 'Hubo un problema al enviar tu pedido. Intenta de nuevo.',
+        title: t.order.error,
+        message: j.error || t.order.errorDesc,
         tone: 'error',
       });
     }
@@ -683,12 +720,14 @@ export default function OrdenCliente() {
   async function getLocation() {
     if (!('geolocation' in navigator)) {
       showDialog({
-        title: 'Sin GPS',
-        message: 'Tu navegador no soporta GPS. Ingresa referencias detalladas en la dirección.',
+        title: t.order.dialogs.noGpsTitle,
+        message: t.order.dialogs.noGpsMsg,
         tone: 'info',
       });
       return;
     }
+
+    setGettingLocation(true);
 
     let best: GeolocationPosition | null = null;
     let closed = false;
@@ -696,6 +735,7 @@ export default function OrdenCliente() {
     const commit = async (p: GeolocationPosition) => {
       if (closed) return;
       closed = true;
+      setGettingLocation(false);
       const g = { lat: p.coords.latitude, lng: p.coords.longitude };
       setGeo(g);
       setGpsAccuracy(Math.round(p.coords.accuracy));
@@ -746,10 +786,10 @@ export default function OrdenCliente() {
       } catch {}
       if (best) commit(best);
       else {
+        setGettingLocation(false);
         showDialog({
-          title: 'No se pudo obtener ubicación',
-          message:
-            'No logramos leer tu ubicación automáticamente. Puedes ajustar el punto en el mapa o escribir referencias claras en la dirección.',
+          title: t.order.dialogs.noLocationTitle,
+          message: t.order.dialogs.noLocationMsg,
           tone: 'info',
         });
       }
@@ -764,16 +804,16 @@ export default function OrdenCliente() {
   const showCustomerForms = hasItems && (!delivery || (delivery && deliveryOk));
 
   const actionHint = useMemo(() => {
-    if (pedidosCerrados) return 'Los pedidos en línea están disponibles de 12:00 pm a 6:00 pm.';
-    if (!hasItems) return 'Agrega al menos un producto para continuar.';
+    if (pedidosCerrados) return t.order.hints.onlineClosed;
+    if (!hasItems) return t.order.hints.addProduct;
     if (delivery && !deliveryOk)
-      return 'Completa tu pedido con un pollo completo, un costillar o 2 medios para poder enviar a domicilio.';
+      return t.order.hints.deliveryMinimum;
     if (delivery) {
-      if (!geo) return 'Toca “Usar mi ubicación” y agrega referencias.';
-      return 'Todo listo, revisa tus datos y confirma tu pedido a domicilio.';
+      if (!geo) return t.order.hints.addProduct;
+      return t.order.hints.deliveryReady;
     }
-    return 'Revisa tu horario y datos para confirmar tu pedido para recoger.';
-  }, [hasItems, delivery, deliveryOk, geo, pedidosCerrados]);
+    return t.order.hints.pickupReady;
+  }, [hasItems, delivery, deliveryOk, geo, pedidosCerrados, t]);
 
   // Para ocultar botones si se acabó inventario (solo para productos que dependen de esas llaves)
   const noPollo = inventory && inventory.pollo <= 0;
@@ -782,67 +822,87 @@ export default function OrdenCliente() {
 
   return (
     <>
-      <main className="space-y-6 md:space-y-8">
-        {/* Hero */}
-        <section className="card bg-gradient-to-r from-amber-900/60 via-zinc-900 to-black border border-zinc-800/70 shadow-xl">
-          <div className="flex flex-col md:flex-row items-center gap-4 md:gap-6">
-            <div className="shrink-0 rounded-2xl bg-black/40 p-2 border border-amber-500/30">
-              <Image
-                src="/logo.png"
-                alt="Pollos Don Agus"
-                width={72}
-                height={72}
-                className="rounded-xl"
-              />
-            </div>
-            <div className="flex-1 space-y-2">
-              <div className="inline-flex items-center gap-2 rounded-full bg-black/40 px-3 py-1 text-[11px] text-amber-200 border border-amber-500/30">
-                <span>🍗 Pedido en línea</span>
-                <span className="opacity-60">• Cliente</span>
-              </div>
-              <h1 className="text-2xl md:text-3xl font-semibold">
-                Arma tu pedido en minutos
-              </h1>
-              <p className="text-sm md:text-base text-zinc-300">
-                Pollos asados/rostizados y costillas a la leña. Haz tu orden,
-                elige hora y decide si quieres recoger en local o recibir en casa.
-              </p>
-              <div className="flex flex-wrap gap-3 text-xs text-zinc-400 pt-1">
-                <span>1. Elige tus productos</span>
-                <span>• 2. Completa tus datos</span>
-                <span>• 3. Confirma Pick Up o Domicilio</span>
-              </div>
-              {inventoryError && (
-                <p className="text-[11px] text-amber-300 pt-1">
-                  {inventoryError}
+      <main className="space-y-4 md:space-y-6">
+        {/* Mensaje si está cerrado */}
+        {pedidosCerrados && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 backdrop-blur-sm p-4 md:p-6">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl flex-shrink-0">🕐</div>
+              <div>
+                <h3 className="font-bold text-red-300 text-base md:text-lg">
+                  {t.order.ui.closedTitle}
+                </h3>
+                <p className="text-red-200/80 text-sm mt-1">
+                  {t.order.ui.closedSchedule}
                 </p>
-              )}
+                <p className="text-red-200/70 text-xs mt-2">
+                  {t.order.ui.closedComeBack}
+                </p>
+              </div>
             </div>
           </div>
-        </section>
+        )}
+
+        {/* Hero */}
+        {!pedidosCerrados && (
+          <section className="card bg-gradient-to-r from-amber-900/50 via-zinc-900 to-black border border-zinc-800/70">
+            <div className="flex flex-col md:flex-row items-start md:items-center gap-3 md:gap-4">
+              <div className="shrink-0 hidden md:block rounded-xl bg-black/40 p-2 border border-amber-500/20">
+                <Image
+                  src="/logo.png"
+                  alt="Pollos Don Agus"
+                  width={56}
+                  height={56}
+                  className="rounded-lg"
+                />
+              </div>
+              <div className="flex-1 space-y-1.5">
+                <h1 className="text-2xl md:text-3xl font-bold text-white">
+                  {t.order.title}
+                </h1>
+                <p className="text-sm text-zinc-300">
+                  {t.order.subtitle}
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Contenedor principal responsive */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+          {/* Columna izquierda: Productos y carrito (2/3 en desktop) */}
+          <div className="lg:col-span-2 space-y-4 md:space-y-6">
 
         {/* Productos */}
-        <section className="space-y-3">
-          <header className="flex items-center justify-between gap-2">
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold">Elige tu antojo</h2>
-              <p className="text-xs text-zinc-400">
-                Agrega pollos y costillas a tu pedido. Puedes ajustar cantidades
-                después.
+              <h2 className="text-2xl font-bold">{t.order.chooseProduct}</h2>
+              <p className="text-sm text-zinc-400 mt-1">
+                {t.order.chooseProductDesc}
               </p>
             </div>
-            <span className="text-[11px] text-zinc-500">
-              Envío disponible con mínimo de pedido
-            </span>
-          </header>
+          </div>
 
           {loadingMenu ? (
-            <div className="text-center py-8 text-zinc-400">
-              <p>Cargando productos del menú...</p>
+            <div className="text-center py-12 text-zinc-400">
+              <p>{t.order.ui.loadingMenu}</p>
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {/* Search bar */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder={t.order.search}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-white text-sm placeholder-zinc-500 focus:outline-none focus:border-amber-500 transition"
+                />
+              </div>
+
+              {/* Grid de productos */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5 auto-rows-max">
                 {availableProducts.map((product) => {
                   const isChicken = product.code === 'pollo' || product.code === 'medio_pollo';
                   const isRibNormal = product.code === 'costillar_medio' || product.code === 'costillar_normal';
@@ -855,522 +915,749 @@ export default function OrdenCliente() {
 
                   if (hideByStock) return null;
 
+                  const imageMap: Record<string, string> = {
+                    'pollo': '/menu/pollo-completo.png',
+                    'medio_pollo': '/menu/medio-pollo.png',
+                    'costillar_normal': '/menu/costillar.png',
+                    'costillar_medio': '/menu/medio-costillar.png',
+                    'costillar_grande': '/menu/costillar-grande.png',
+                  };
+
+                  const imageSrc = imageMap[product.code] || '/logo.png';
+                  const itemCount = items.filter(it => it.kind === product.code).length;
+
                   return (
                     <button
                       key={product._id}
-                      className="card hover:ring-2 ring-amber-500/60 transition hover:-translate-y-0.5 text-left flex flex-col justify-between"
-                      onClick={() => add(product.code)}
+                      className="relative group cursor-pointer overflow-hidden rounded-lg bg-black/40 border border-zinc-800 hover:border-amber-500/70 transition-all duration-200 hover:shadow-lg hover:shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex flex-col h-full hover:-translate-y-1"
+                      onClick={() => !pedidosCerrados && add(product.code)}
                       disabled={pedidosCerrados}
+                      type="button"
                     >
-                      <div>
+                      {/* Imagen compacta */}
+                      <div className="relative h-24 md:h-28 w-full bg-gradient-to-br from-zinc-800 to-black overflow-hidden flex-shrink-0">
+                        <Image
+                          src={imageSrc}
+                          alt={product.name}
+                          fill
+                          className="object-cover group-hover:scale-125 transition-transform duration-300"
+                        />
+                        
+                        {/* Badge solo tienda */}
                         {product.showOnlyInStore && (
-                          <div className="text-xs text-orange-300 mb-1">
-                            ⚠️ Solo en tienda
+                          <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-orange-600/90 text-[8px] md:text-[10px] font-semibold text-white backdrop-blur-sm">
+                            🏪
                           </div>
                         )}
-                        <div className="font-semibold">{product.name}</div>
-                        <div className="text-xs text-zinc-400 mt-1">
-                          {product.description || 'Delicioso producto a la leña.'}
-                        </div>
+
+                        {/* Indicador de cantidad */}
+                        {itemCount > 0 && (
+                          <div className="absolute bottom-1 left-1 inline-flex items-center justify-center h-6 w-6 rounded-full bg-emerald-600 text-white text-[11px] font-bold">
+                            {itemCount}
+                          </div>
+                        )}
                       </div>
-                      <div className="mt-3 text-[11px] text-zinc-400">
-                        ${product.price} pickup
-                        {!product.showOnlyInStore && ' • +$20 envío (por pedido)'}
+
+                      {/* Contenido compacto */}
+                      <div className="p-2 space-y-1 flex flex-col flex-1">
+                        <h3 className="font-bold text-xs md:text-sm text-white line-clamp-1">
+                          {product.name}
+                        </h3>
+                        <p className="text-[10px] text-zinc-400 line-clamp-1">
+                          {product.description || t.home.story.features.wood}
+                        </p>
+
+                        <div className="mt-auto pt-1 border-t border-zinc-700">
+                          <span className="text-sm md:text-base font-bold text-amber-400">
+                            ${product.price}
+                          </span>
+                        </div>
                       </div>
                     </button>
                   );
                 })}
               </div>
 
+              {availableProducts.length === 0 && (
+                <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-8 text-center">
+                  <p className="text-sm text-zinc-400">{t.order.ui.noProductsAvailable}</p>
+                </div>
+              )}
+
               {inventory && noPollo && noCostillarNormal && noCostillarGrande && (
-                <p className="text-xs text-red-300">
-                  No hay stock disponible de pollos ni costillares en este momento.
-                </p>
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-center">
+                  <p className="text-sm text-red-300 font-medium">{t.order.ui.noStockToday}</p>
+                </div>
               )}
             </>
           )}
         </section>
 
         {/* Carrito */}
-        <section className="card space-y-3">
+        <section className="space-y-4">
           <header className="flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-lg font-semibold">Tu pedido</h2>
-              <p className="text-xs text-zinc-400">
-                Ajusta sabores, preparación y cantidades.
+              <h2 className="text-2xl font-bold">{t.order.yourOrder}</h2>
+              <p className="text-sm text-zinc-400 mt-1">
+                {hasItems
+                  ? `${items.length} ${t.order.ui.cartProductsCount}`
+                  : t.order.ui.cartEmptyShort}
               </p>
             </div>
-            <span className="text-[11px] text-zinc-500">
-              {hasItems ? `${items.length} línea(s) en el pedido` : 'Sin productos aún'}
-            </span>
+            {hasItems && (
+              <div className="text-right">
+                <div className="text-2xl font-bold text-amber-400">${total}</div>
+                <span className="text-xs text-zinc-500">{t.order.ui.totalLabel}</span>
+              </div>
+            )}
           </header>
 
-          {!hasItems && (
-            <div className="rounded-lg border border-dashed border-zinc-700 py-6 text-center text-sm text-zinc-500">
-              Aún no has agregado nada. Empieza seleccionando un pollo o
-              costillar de la parte superior.
-            </div>
-          )}
+          {hasItems ? (
+            <div className="space-y-3 bg-black/20 rounded-xl border border-zinc-800 overflow-hidden">
+              {items.map((it, idx) => {
+                const product = getProductByCode(it.kind);
+                if (!product || !menuData) return null;
 
-          {items.map((it, idx) => {
-            const product = getProductByCode(it.kind);
-            if (!product || !menuData) return null;
+                const isChicken = product.availableStyles.length > 0;
+                const isRib = product.availableFlavors.length > 0 && !isChicken;
 
-            const isChicken = product.availableStyles.length > 0;
-            const isRib = product.availableFlavors.length > 0 && !isChicken;
+                const availableFlavors = product.availableFlavors
+                  .map((f) => menuData.flavors.find((fl) => fl._id === f._id))
+                  .filter((f): f is Flavor => f !== undefined && f.isActive);
 
-            const availableFlavors = product.availableFlavors
-              .map((f) => menuData.flavors.find((fl) => fl._id === f._id))
-              .filter((f): f is Flavor => f !== undefined && f.isActive);
+                const availableStyles = product.availableStyles
+                  .map((s) => menuData.styles.find((st) => st._id === s._id))
+                  .filter((s): s is Style => s !== undefined && s.isActive);
 
-            const availableStyles = product.availableStyles
-              .map((s) => menuData.styles.find((st) => st._id === s._id))
-              .filter((s): s is Style => s !== undefined && s.isActive);
+                const currentStyle = it.styleId ? getStyleById(it.styleId) : null;
+                const isAsado = currentStyle?.name === 'asado';
 
-            const currentStyle = it.styleId ? getStyleById(it.styleId) : null;
-            const isAsado = currentStyle?.name === 'asado';
+                let linePrice = product.price;
+                if (it.flavorId) {
+                  const flavor = getFlavorById(it.flavorId);
+                  if (flavor) linePrice += flavor.price;
+                }
+                linePrice *= it.qty;
 
-            let linePrice = product.price;
-            if (it.flavorId) {
-              const flavor = getFlavorById(it.flavorId);
-              if (flavor) linePrice += flavor.price;
-            }
-            linePrice *= it.qty;
+                const styleName = it.styleId
+                  ? getStyleById(it.styleId)?.displayName || it.chickenStyle
+                  : it.chickenStyle;
 
-            const styleName = it.styleId
-              ? getStyleById(it.styleId)?.displayName || it.chickenStyle
-              : it.chickenStyle;
+                return (
+                  <div
+                    key={idx}
+                    className="border-b border-zinc-700 last:border-none p-4 space-y-3 hover:bg-white/5 transition"
+                  >
+                    {/* Header del item */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-semibold text-white flex items-center gap-2">
+                          {product.name}
+                          <span className="text-xs bg-amber-600/30 text-amber-200 px-2 py-0.5 rounded-full font-normal">
+                            ×{it.qty}
+                          </span>
+                        </h4>
+                        
+                        {/* Detalles */}
+                        {(isChicken || isRib) && (it.flavor || styleName) && (
+                          <p className="text-xs text-zinc-400 mt-1">
+                            {styleName && isChicken && (
+                              <>
+                                <span className="text-zinc-300 font-medium">{styleName}</span>
+                                {it.flavor && <span> • {it.flavor}</span>}
+                              </>
+                            )}
+                            {!isChicken && it.flavor && (
+                              <span className="text-zinc-300 font-medium">{it.flavor}</span>
+                            )}
+                          </p>
+                        )}
+                      </div>
 
-            return (
-              <div
-                key={idx}
-                className="grid items-center gap-3 py-3 border-b border-zinc-800 last:border-none text-sm"
-                style={{
-                  gridTemplateColumns: isChicken
-                    ? 'minmax(120px,1.1fr) minmax(140px,1.1fr) minmax(140px,1fr) 80px 160px'
-                    : 'minmax(120px,1.1fr) minmax(140px,1.1fr) 80px 160px',
-                }}
-              >
-                {/* Descripción item */}
-                <div className="space-y-1">
-                  <div className="font-semibold">{product.name}</div>
-                  {isChicken && styleName && (
-                    <div className="text-[11px] text-zinc-400">
-                      {styleName === 'asado' || styleName === 'Asado'
-                        ? `Asado • ${it.flavor || 'Sinaloa (Natural)'}`
-                        : `${styleName} • Sinaloa (Natural)`}
+                      <div className="text-right flex flex-col items-end gap-1">
+                        <div className="font-bold text-lg text-amber-400">${linePrice}</div>
+                        <button
+                          className="text-xs px-2 py-1 rounded text-red-400 hover:bg-red-600/20 transition"
+                          onClick={() => setItems((s) => s.filter((_, i) => i !== idx))}
+                          title={t.order.ui.remove}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </div>
 
-                {/* Sabor */}
-                {isChicken && availableFlavors.length > 0 ? (
-                  <div>
-                    <label className="text-[11px] text-zinc-400">
-                      Sabor {!isAsado && '(solo en asado)'}
-                    </label>
-                    <select
-                      className="input w-full mt-1 disabled:opacity-50"
-                      disabled={!isAsado}
-                      value={it.flavorId || ''}
-                      onChange={(e) => {
-                        const flavorId = e.target.value;
-                        const flavor = getFlavorById(flavorId);
-                        if (flavor) {
-                          setItems((s) =>
-                            s.map((x, i) =>
-                              i === idx ? { ...x, flavorId, flavor: flavor.name } : x
-                            )
-                          );
-                        }
-                      }}
-                    >
-                      {availableFlavors.map((f) => (
-                        <option key={f._id} value={f._id}>
-                          {f.name} {f.price > 0 ? `(+$${f.price})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : isRib && availableFlavors.length > 0 ? (
-                  <div>
-                    <label className="text-[11px] text-zinc-400">Sabor</label>
-                    <select
-                      className="input w-full mt-1"
-                      value={it.flavorId || ''}
-                      onChange={(e) => {
-                        const flavorId = e.target.value;
-                        const flavor = getFlavorById(flavorId);
-                        if (flavor) {
-                          setItems((s) =>
-                            s.map((x, i) =>
-                              i === idx ? { ...x, flavorId, flavor: flavor.name } : x
-                            )
-                          );
-                        }
-                      }}
-                    >
-                      {availableFlavors.map((f) => (
-                        <option key={f._id} value={f._id}>
-                          {f.name} {f.price > 0 ? `(+$${f.price})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
-                  <div />
-                )}
-
-                {/* Preparación */}
-                {isChicken && availableStyles.length > 0 && (
-                  <div>
-                    <label className="text-[11px] text-zinc-400">Preparación</label>
-                    <select
-                      className="input w-full mt-1"
-                      value={it.styleId || ''}
-                      onChange={(e) => {
-                        const styleId = e.target.value;
-                        const style = getStyleById(styleId);
-                        if (style) {
-                          const isAs = style.name === 'asado';
-                          const defaultFlavor = getDefaultFlavor();
-
-                          setItems((s) =>
-                            s.map((x, i) => {
-                              if (i !== idx) return x;
-
-                              if (
-                                !isAs &&
-                                defaultFlavor &&
-                                availableFlavors.some((f) => f._id === defaultFlavor._id)
-                              ) {
-                                return {
-                                  ...x,
-                                  styleId,
-                                  chickenStyle: style.name,
-                                  flavorId: defaultFlavor._id,
-                                  flavor: defaultFlavor.name,
-                                };
+                    {/* Controles */}
+                    <div className="flex flex-wrap gap-2 pt-2 border-t border-zinc-700">
+                      {/* Sabor */}
+                      {(isChicken || isRib) && availableFlavors.length > 0 && (
+                        <div className="flex-1 min-w-[150px]">
+                          <label className="text-[10px] text-zinc-500 uppercase tracking-wider">
+                            {isChicken && isAsado
+                              ? t.order.ui.flavorAsadoOnly
+                              : t.order.ui.flavorLabel}
+                          </label>
+                          <select
+                            className="w-full mt-1 px-2 py-1.5 rounded-lg bg-zinc-800 text-xs text-white border border-zinc-700 hover:border-amber-500/50 transition disabled:opacity-50"
+                            disabled={isChicken && !isAsado}
+                            value={it.flavorId || ''}
+                            onChange={(e) => {
+                              const flavorId = e.target.value;
+                              const flavor = getFlavorById(flavorId);
+                              if (flavor) {
+                                setItems((s) =>
+                                  s.map((x, i) =>
+                                    i === idx ? { ...x, flavorId, flavor: flavor.name } : x
+                                  )
+                                );
                               }
+                            }}
+                          >
+                            {availableFlavors.map((f) => (
+                              <option key={f._id} value={f._id}>
+                                {f.name} {f.price > 0 ? `+$${f.price}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
 
-                              return {
-                                ...x,
-                                styleId,
-                                chickenStyle: style.name,
-                                flavorId: x.flavorId || (defaultFlavor?._id || ''),
-                                flavor: x.flavor || (defaultFlavor?.name || ''),
-                              };
-                            })
-                          );
-                        }
-                      }}
-                    >
-                      {availableStyles.map((s) => (
-                        <option key={s._id} value={s._id}>
-                          {s.displayName}
-                        </option>
-                      ))}
-                    </select>
+                      {/* Preparación (pollos) */}
+                      {isChicken && availableStyles.length > 0 && (
+                        <div className="flex-1 min-w-[150px]">
+                          <label className="text-[10px] text-zinc-500 uppercase tracking-wider">{t.order.ui.preparationLabel}</label>
+                          <select
+                            className="w-full mt-1 px-2 py-1.5 rounded-lg bg-zinc-800 text-xs text-white border border-zinc-700 hover:border-amber-500/50 transition"
+                            value={it.styleId || ''}
+                            onChange={(e) => {
+                              const styleId = e.target.value;
+                              const style = getStyleById(styleId);
+                              if (style) {
+                                const isAs = style.name === 'asado';
+                                const defaultFlavor = getDefaultFlavor();
+
+                                setItems((s) =>
+                                  s.map((x, i) => {
+                                    if (i !== idx) return x;
+                                    if (
+                                      !isAs &&
+                                      defaultFlavor &&
+                                      availableFlavors.some((f) => f._id === defaultFlavor._id)
+                                    ) {
+                                      return {
+                                        ...x,
+                                        styleId,
+                                        chickenStyle: style.name,
+                                        flavorId: defaultFlavor._id,
+                                        flavor: defaultFlavor.name,
+                                      };
+                                    }
+                                    return {
+                                      ...x,
+                                      styleId,
+                                      chickenStyle: style.name,
+                                      flavorId: x.flavorId || (defaultFlavor?._id || ''),
+                                      flavor: x.flavor || (defaultFlavor?.name || ''),
+                                    };
+                                  })
+                                );
+                              }
+                            }}
+                          >
+                            {availableStyles.map((s) => (
+                              <option key={s._id} value={s._id}>
+                                {s.displayName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Cantidad */}
+                      <div className="flex-1 min-w-[140px]">
+                        <label className="text-[10px] text-zinc-500 uppercase tracking-wider">{t.order.ui.quantityLabel}</label>
+                        <div className="mt-1 flex items-center gap-2 bg-zinc-800 rounded-lg border border-zinc-700">
+                          <button
+                            className="px-3 py-1.5 text-xs font-bold text-zinc-400 hover:text-white transition"
+                            onClick={() =>
+                              setItems((s) =>
+                                s.map((x, i) =>
+                                  i === idx ? { ...x, qty: Math.max(1, x.qty - 1) } : x
+                                )
+                              )
+                            }
+                          >
+                            −
+                          </button>
+                          <span className="flex-1 text-center text-xs font-semibold">{it.qty}</span>
+                          <button
+                            className="px-3 py-1.5 text-xs font-bold text-amber-400 hover:text-amber-300 transition"
+                            onClick={() => incrementItem(idx)}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Resumen de detalles */}
+              <div className="p-4 bg-white/5 border-t border-zinc-700 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-400">{t.order.subtotal}</span>
+                  <span className="text-white font-medium">
+                    ${items.reduce((sum, it) => {
+                      const p = getProductByCode(it.kind);
+                      if (!p) return sum;
+                      let price = p.price;
+                      if (it.flavorId) {
+                        const f = getFlavorById(it.flavorId);
+                        if (f) price += f.price;
+                      }
+                      return sum + price * it.qty;
+                    }, 0)}
+                  </span>
+                </div>
+                
+                {delivery && deliveryOk && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-400">{t.order.shipping}</span>
+                    <span className="text-emerald-400 font-medium">+$20</span>
                   </div>
                 )}
 
-                {/* Precio */}
-                <div className="text-right font-semibold text-zinc-100">${linePrice}</div>
+                {tortillas > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-400">{t.order.tortillas} ({tortillas} {t.order.ui.tortillasPackShort})</span>
+                    <span className="text-white font-medium">${tortillas * 10}</span>
+                  </div>
+                )}
 
-                {/* Cantidad + quitar */}
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    className="btn h-8 w-8 !p-0 !leading-none flex items-center justify-center"
-                    aria-label="Disminuir"
-                    onClick={() =>
-                      setItems((s) =>
-                        s.map((x, i) =>
-                          i === idx ? { ...x, qty: Math.max(1, x.qty - 1) } : x
-                        )
-                      )
-                    }
-                  >
-                    <span className="text-base">−</span>
-                  </button>
-
-                  <div className="min-w-[2ch] text-center">{it.qty}</div>
-
-                  <button
-                    className="btn h-8 w-8 !p-0 !leading-none flex items-center justify-center"
-                    aria-label="Aumentar"
-                    onClick={() => incrementItem(idx)}
-                  >
-                    <span className="text-base">+</span>
-                  </button>
-
-                  <button
-                    aria-label="Quitar"
-                    className="btn h-8 w-8 !p-0 !leading-none flex items-center justify-center bg-red-600 hover:bg-red-500"
-                    onClick={() => setItems((s) => s.filter((_, i) => i !== idx))}
-                    title="Quitar"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                <div className="flex justify-between text-base font-bold pt-2 border-t border-zinc-700">
+                  <span>{t.order.total}</span>
+                  <span className="text-amber-400">${total}</span>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ) : (
+            <div className="rounded-xl border-2 border-dashed border-zinc-700 py-8 px-4 text-center">
+              <div className="text-3xl mb-2">🛒</div>
+              <p className="text-sm text-zinc-400 font-medium">{t.order.emptyCart}</p>
+              <p className="text-xs text-zinc-500 mt-1">
+                {t.order.emptyCartDesc}
+              </p>
+            </div>
+          )}
         </section>
 
         {/* Opciones */}
-        <section className="grid md:grid-cols-3 gap-4">
+        <section className="grid md:grid-cols-2 gap-4">
           {/* Entrega a domicilio */}
           <div
-            className={`card flex flex-col gap-3 transition-all border-2 ${
+            className={`rounded-xl border-2 overflow-hidden transition-all group ${
               delivery
                 ? deliveryOk
-                  ? 'border-emerald-500/80 bg-emerald-900/25 shadow-[0_0_25px_rgba(16,185,129,0.35)]'
-                  : 'border-red-500/90 bg-red-900/25 shadow-[0_0_25px_rgba(239,68,68,0.45)]'
-                : 'border-zinc-800 bg-zinc-900/80'
+                  ? 'border-emerald-500/60 bg-gradient-to-br from-emerald-900/20 via-zinc-900/50 to-black/80 hover:border-emerald-500/80'
+                  : 'border-red-500/60 bg-gradient-to-br from-red-900/20 via-zinc-900/50 to-black/80 hover:border-red-500/80'
+                : 'border-amber-500/20 bg-gradient-to-br from-amber-900/10 via-zinc-900/50 to-black/80 hover:border-amber-500/40'
             }`}
           >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="font-semibold">Entrega a domicilio</div>
-                <div className="text-xs text-zinc-300 mt-1">
-                  + $20 por pedido • paga en efectivo al recibir.
+            <div className="p-4 md:p-5 space-y-4 h-full flex flex-col">
+              {/* Header con switch */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <h3 className="font-bold text-lg md:text-xl text-white flex items-center gap-2">
+                    {t.order.ui.deliveryTitle}
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    {delivery ? t.order.ui.deliveryActive : t.order.ui.pickupActive}
+                  </p>
+                </div>
+                <DeliverySwitch
+                  checked={delivery}
+                  onChange={setDelivery}
+                  tone={delivery && !deliveryOk ? 'error' : 'ok'}
+                />
+              </div>
+
+              {/* Ícono y descripción */}
+              <div className="flex-1 flex items-center justify-center py-2">
+                <div className="text-center space-y-2">
+                  <div className="text-5xl md:text-6xl opacity-80 group-hover:opacity-100 transition-opacity">
+                    {delivery ? '🚗' : '🛍️'}
+                  </div>
+                  <p className="text-xs text-zinc-300 leading-relaxed px-2">
+                    {delivery 
+                      ? t.order.ui.deliveryFast
+                      : t.order.ui.pickupLocal}
+                  </p>
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-1 text-xs text-zinc-200">
-                <div className="inline-flex items-center gap-2">
-                  <span>{delivery ? 'Sí' : 'No'}</span>
-                  <DeliverySwitch
-                    checked={delivery}
-                    onChange={setDelivery}
-                    tone={delivery && !deliveryOk ? 'error' : 'ok'}
-                  />
+
+              {/* Mensaje o estado */}
+              {msg && (
+                <div className="text-xs rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 px-3 py-2.5 space-y-1">
+                  <p className="font-semibold">{t.order.ui.deliveryRequirementTitle}</p>
+                  <p>{msg}</p>
                 </div>
-              </div>
+              )}
+
+              {delivery && deliveryOk && (
+                <div className="text-xs rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 px-3 py-2.5 font-medium">
+                  {t.order.ui.deliveryMinimumOk}
+                </div>
+              )}
             </div>
-
-            {msg && (
-              <div className="mt-1 text-xs rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 px-3 py-2">
-                {msg}
-              </div>
-            )}
-
-            {gpsAccuracy != null && geo && gpsAccuracy < 3000 && (
-              <div className="text-[11px] text-zinc-400">
-                Precisión GPS aprox.: ±{gpsAccuracy} m
-              </div>
-            )}
-
-            <p className="text-[11px] text-zinc-500 pt-1">
-              Si desactivas la entrega, tu pedido será para recoger en el local.
-            </p>
           </div>
 
           {/* Tortillas */}
-          <div className="card flex items-center justify-between gap-3">
-            <div>
-              <div className="font-semibold">Tortillas extra</div>
-              <div className="text-sm text-zinc-400">$10 por paquete adicional.</div>
-              <div className="text-[11px] text-zinc-500 mt-1">
-                Ideal si son varios o quieres asegurar que alcance.
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                className="btn h-8 w-8 !p-0 flex items-center justify-center"
-                onClick={() => setTortillas(Math.max(0, tortillas - 1))}
-              >
-                −
-              </button>
-              <div className="min-w-[3ch] text-center text-lg">{tortillas}</div>
-              <button
-                className="btn h-8 w-8 !p-0 flex items-center justify-center"
-                onClick={() => setTortillas(tortillas + 1)}
-              >
-                +
-              </button>
-            </div>
-          </div>
+          <div className="rounded-xl border-2 border-amber-500/30 bg-gradient-to-br from-amber-900/20 via-zinc-900/50 to-black/80 overflow-hidden hover:border-amber-500/50 transition-all group p-4 md:p-5">
+            <div className="space-y-3 h-full flex flex-col">
+              {/* Header */}
+              <div className="flex items-start gap-3 flex-1">
+                {/* Imagen pequeña en móvil, mediana en desktop */}
+                <div className="relative w-20 h-20 md:w-24 md:h-24 rounded-lg overflow-hidden bg-gradient-to-br from-amber-200/10 to-transparent border border-amber-500/40 shadow-md shadow-amber-500/10 flex-shrink-0 group-hover:shadow-amber-500/20 transition-shadow">
+                  <Image
+                    src="/menu/tortillas.png"
+                    alt="Tortillas"
+                    fill
+                    className="object-cover group-hover:scale-110 transition-transform duration-300"
+                  />
+                </div>
 
-          {/* Total */}
-          <div className="card flex flex-col justify-between gap-2">
-            <div>
-              <div className="font-semibold">Total estimado</div>
-              <div className="text-3xl font-extrabold mt-1">${total}</div>
-            </div>
-            <div className="text-[11px] text-zinc-400">
-              {delivery
-                ? deliveryOk
-                  ? 'Incluye envío (pedido cumple el mínimo).'
-                  : 'Aún no incluye envío: tu pedido no cumple el mínimo para domicilio.'
-                : 'No incluye envío porque seleccionaste Pick Up.'}
+                {/* Contenido texto */}
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-base md:text-lg text-white">{t.order.ui.tortillasTitle}</h3>
+                  <p className="text-xs text-amber-200/70 mt-1">{t.order.ui.tortillasSubtitle}</p>
+                  
+                  {/* Precio */}
+                  <div className="mt-2 space-y-0.5">
+                    <p className="text-xl md:text-2xl font-bold text-amber-400">$10</p>
+                    <p className="text-[10px] text-zinc-400">{t.order.ui.perPack}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Controles */}
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-amber-500/20">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    className="h-9 w-9 rounded-lg bg-red-600/20 hover:bg-red-600/40 border border-red-500/50 text-red-400 hover:text-red-300 font-bold text-base transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={() => setTortillas(Math.max(0, tortillas - 1))}
+                    disabled={tortillas === 0}
+                    title={t.order.ui.removeTortillas}
+                  >
+                    −
+                  </button>
+
+                  <div className="flex flex-col items-center gap-0.5 px-2">
+                    <span className="text-lg font-bold text-white">{tortillas}</span>
+                    <span className="text-[9px] text-zinc-500 uppercase tracking-wider">{t.order.ui.tortillasPackShort}</span>
+                  </div>
+                </div>
+
+                <button
+                  className="flex-1 h-9 px-3 rounded-lg bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 border border-amber-400/50 text-white font-semibold text-sm transition-all hover:shadow-lg hover:shadow-amber-500/30 active:scale-95"
+                  onClick={() => {
+                    showDialog({
+                      title: t.order.dialogs.addTortillasTitle,
+                      message: t.order.dialogs.addTortillasMsg,
+                      tone: 'info',
+                      onClose: () => {
+                        setTortillas(tortillas + 1);
+                      },
+                    });
+                  }}
+                  title={t.order.ui.addTortillasButton}
+                >
+                  {t.order.ui.addTortillas}
+                </button>
+              </div>
+
+              {/* Resumen economía */}
+              {tortillas > 0 && (
+                <div className="mt-2 p-2 rounded-lg bg-black/50 border border-amber-500/20">
+                  <p className="text-xs text-amber-200">
+                    {t.order.tortillas}: <span className="font-bold">${tortillas * 10}</span>
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </section>
 
         {/* Datos cliente */}
-        <section className="card space-y-4">
-          <header className="space-y-1">
-            <h2 className="text-lg font-semibold">Datos para tu pedido</h2>
-            <p className="text-xs text-zinc-400">
-              Estos datos solo se usan para coordinar tu pedido y entrega.
-            </p>
-          </header>
+        <section className="space-y-3">
+          <h2 className="text-lg font-bold">{t.order.orderInfo}</h2>
 
           {formErrors.length > 0 && (
-            <ul className="text-red-300 text-sm bg-red-950/40 border border-red-800 rounded-lg p-3 space-y-1">
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 space-y-1">
               {formErrors.map((e, i) => (
-                <li key={i}>• {e}</li>
+                <p key={i} className="text-xs text-red-300">• {e}</p>
               ))}
-            </ul>
+            </div>
           )}
 
           {showCustomerForms ? (
             <>
-              {/* Fila 1 */}
-              <div className="grid md:grid-cols-3 gap-4 items-end">
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-zinc-200 text-center md:text-left">
-                    Nombre *
-                  </label>
+              {/* Datos básicos */}
+              <div className="space-y-2.5 bg-black/40 rounded-xl border border-zinc-800 p-4">
+                <h3 className="text-sm font-semibold text-zinc-200">{t.order.yourInfo}</h3>
+                
+                <div className="grid sm:grid-cols-2 gap-2.5">
                   <input
-                    className="input h-9 text-sm"
-                    placeholder="Tu nombre"
+                    className="input h-10 text-sm bg-zinc-800 border-zinc-700"
+                    placeholder={t.order.fullName}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                   />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-zinc-200 text-center md:text-left">
-                    Teléfono *
-                  </label>
                   <input
-                    className="input h-9 text-sm"
-                    placeholder="10 dígitos (MX)"
+                    className="input h-10 text-sm bg-zinc-800 border-zinc-700"
+                    placeholder={t.order.phone}
                     inputMode="tel"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-zinc-200 text-center md:text-left">
-                    Horario deseado *
-                  </label>
-                  <select
-                    className="input h-9 text-sm"
-                    value={desiredAt}
-                    onChange={(e) => setDesiredAt(e.target.value)}
-                    suppressHydrationWarning
-                  >
-                    <option value="" disabled>
-                      {pedidosCerrados ? 'Horario cerrado (12:00–18:00)' : 'Selecciona una hora'}
+                <select
+                  className="input h-10 w-full text-sm bg-zinc-800 border-zinc-700"
+                  value={desiredAt}
+                  onChange={(e) => setDesiredAt(e.target.value)}
+                  suppressHydrationWarning
+                >
+                  <option value="" disabled>
+                    {pedidosCerrados ? t.order.ui.closedScheduleShort : t.order.desiredTime}
+                  </option>
+                  {slots.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
                     </option>
-                    {slots.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                  ))}
+                </select>
               </div>
 
-              {/* Fila 2/3 */}
-              {delivery ? (
-                <div className="space-y-3">
-                  <div className="grid md:grid-cols-[auto,1fr] gap-3 items-center">
-                    <div className="flex flex-wrap gap-2">
-                      <button className="btn h-10 px-4" onClick={getLocation}>
-                        Usar mi ubicación
+              {/* Sección de ubicación si es delivery */}
+              {delivery && (
+                <div className="space-y-2.5 bg-black/40 rounded-xl border border-zinc-800 p-4">
+                  <h3 className="text-sm font-semibold text-zinc-200">{t.order.deliveryLocation}</h3>
+                  
+                  {gettingLocation && (
+                    <div className="space-y-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="animate-spin">📍</div>
+                        <span className="text-xs text-amber-200 font-medium">{t.order.ui.obtainingLocation}</span>
+                      </div>
+                      <div className="w-full bg-black/50 rounded-full h-1.5 overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full animate-pulse" style={{ width: '100%' }}></div>
+                      </div>
+                      <p className="text-[10px] text-amber-200/70">{t.order.ui.obtainingLocationHint}</p>
+                    </div>
+                  )}
+
+                  {!gettingLocation && (
+                    <div className="flex gap-2">
+                      <button 
+                        className="flex-1 btn h-10 text-sm bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={getLocation}
+                        disabled={gettingLocation}
+                      >
+                        {t.order.ui.myLocationBtn}
                       </button>
                       {geo && (
-                        <button className="btn h-10 px-4" onClick={() => setShowMap(true)}>
-                          Ajustar en mapa
+                        <button 
+                          className="flex-1 btn h-10 text-sm bg-zinc-700 hover:bg-zinc-600"
+                          onClick={() => setShowMap(true)}
+                        >
+                          {t.order.ui.adjustMapBtn}
                         </button>
                       )}
                     </div>
-                    <span className="text-xs md:text-sm text-zinc-400">
-                      {geo
-                        ? `Ubicación guardada: (${geo.lat.toFixed(5)}, ${geo.lng.toFixed(5)})`
-                        : 'Aún no se ha seleccionado ubicación.'}
-                    </span>
-                  </div>
+                  )}
 
-                  <div className="space-y-1">
-                    <label className="block text-sm font-medium text-zinc-200">
-                      Dirección / referencias para el repartidor *
-                    </label>
-                    <textarea
-                      className="input text-sm min-h-[96px] w-full max-w-none"
-                      placeholder="Ej. Frente a la plaza, portón negro, segunda casa..."
-                      value={addressNote}
-                      onChange={(e) => setAddressNote(e.target.value)}
-                    />
-                  </div>
+                  {geo && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-emerald-300 font-medium">
+                        {t.order.ui.locationObtainedShort}
+                      </p>
+                      <p className="text-[10px] text-zinc-400">
+                        {t.order.ui.coords}: ({geo.lat.toFixed(4)}, {geo.lng.toFixed(4)})
+                        {gpsAccuracy && gpsAccuracy < 3000 && (
+                          <span className="text-emerald-300 ml-2">{t.order.ui.precision}: ±{gpsAccuracy}m</span>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                  <textarea
+                    className="input w-full text-sm bg-zinc-800 border-zinc-700 min-h-[80px]"
+                    placeholder={t.order.address}
+                    value={addressNote}
+                    onChange={(e) => setAddressNote(e.target.value)}
+                  />
+
+                  {gpsAccuracy != null && gpsAccuracy < 3000 && (
+                    <p className="text-[11px] text-zinc-500">
+                      {t.order.ui.precision} GPS: ±{gpsAccuracy}m
+                    </p>
+                  )}
                 </div>
-              ) : (
-                <p className="text-xs text-zinc-400">
-                  Como seleccionaste <span className="font-semibold">Pick Up</span>, solo necesitamos tus datos básicos y la hora aproximada.
-                </p>
+              )}
+
+              {/* Pick up */}
+              {!delivery && (
+                <div className="bg-black/40 rounded-xl border border-zinc-800 p-4">
+                  <p className="text-sm text-zinc-300">
+                    {t.order.ui.pickupAt} <span className="font-semibold">Ignacio Manuel Altamirano 216</span>
+                  </p>
+                  <p className="text-xs text-zinc-400 mt-2">
+                    Centro, Puruándiro, Michoacán 58500
+                  </p>
+                </div>
               )}
             </>
           ) : (
-            <p className="text-xs text-zinc-400">
-              Primero arma tu pedido. Una vez que tengas los productos seleccionados{' '}
-              {delivery && !deliveryOk ? 'y cumplas el mínimo para domicilio ' : ''}
-              te pediremos tus datos para coordinar la entrega.
-            </p>
+            <div className="bg-black/40 rounded-xl border border-dashed border-zinc-700 p-6 text-center">
+              <p className="text-sm text-zinc-400">{t.order.ui.addProductsToContinue}</p>
+            </div>
           )}
         </section>
+          </div>
 
-        {/* Mapa para Pick Up */}
-        {!delivery && hasItems && (
-          <section className="card grid gap-3">
-            <div>
-              <h2 className="text-lg font-semibold">Ubicación para Pick Up</h2>
-              <p className="text-sm text-zinc-400 mt-1">
-                Pasa a recoger tu pedido en el local a la hora que elegiste.
-              </p>
+          {/* Columna derecha: Resumen (1/3 en desktop) */}
+          <div className="lg:col-span-1">
+            <div className="sticky top-4 space-y-4">
+              {/* Resumen del pedido */}
+              <div className="rounded-xl border border-zinc-800 bg-black/50 overflow-hidden">
+                {/* Header */}
+                <div className="p-3 md:p-4 bg-gradient-to-r from-amber-600/20 to-amber-500/10 border-b border-zinc-800">
+                  <h3 className="font-bold text-sm md:text-base text-white">{t.order.ui.summaryTitle}</h3>
+                </div>
+
+                {/* Items */}
+                <div className="divide-y divide-zinc-800 max-h-96 overflow-y-auto">
+                  {items.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-zinc-500">
+                      {t.order.ui.noProductsYet}
+                    </div>
+                  ) : (
+                    items.map((it, idx) => {
+                      const p = getProductByCode(it.kind);
+                      if (!p) return null;
+                      let price = p.price;
+                      if (it.flavorId) {
+                        const f = getFlavorById(it.flavorId);
+                        if (f) price += f.price;
+                      }
+                      return (
+                        <div
+                          key={`${it.productId ?? it.kind}-${it.flavorId ?? 'na'}-${it.styleId ?? 'na'}-${it.qty}`}
+                          className="p-3 text-xs space-y-1"
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-white truncate">{p.name}</p>
+                              {it.flavor && <p className="text-zinc-400 truncate">{it.flavor}</p>}
+                            </div>
+                            <span className="font-bold text-amber-400 flex-shrink-0">×{it.qty}</span>
+                          </div>
+                          <div className="text-right text-amber-400 font-semibold">
+                            ${price * it.qty}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Totals */}
+                {hasItems && (
+                  <div className="p-3 md:p-4 bg-black/80 border-t border-zinc-800 space-y-2">
+                    <div className="flex justify-between text-xs text-zinc-400">
+                      <span>{t.order.subtotal}</span>
+                      <span>${items.reduce((sum, it) => {
+                        const p = getProductByCode(it.kind);
+                        if (!p) return sum;
+                        let price = p.price;
+                        if (it.flavorId) {
+                          const f = getFlavorById(it.flavorId);
+                          if (f) price += f.price;
+                        }
+                        return sum + price * it.qty;
+                      }, 0)}</span>
+                    </div>
+
+                    {delivery && deliveryOk && (
+                      <div className="flex justify-between text-xs text-zinc-400">
+                        <span>{t.order.ui.shippingShort}</span>
+                        <span className="text-emerald-400">+$20</span>
+                      </div>
+                    )}
+
+                    {tortillas > 0 && (
+                      <div className="flex justify-between text-xs text-zinc-400">
+                        <span>{t.order.tortillas} ({tortillas})</span>
+                        <span>${tortillas * 10}</span>
+                      </div>
+                    )}
+
+                    <div className="border-t border-zinc-700 pt-2 flex justify-between font-bold text-sm">
+                      <span className="text-white">{t.order.total}</span>
+                      <span className="text-amber-400">${total}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón confirmar */}
+              {hasItems && showCustomerForms && (
+                <button
+                  className="w-full py-3 md:py-4 rounded-xl font-bold text-sm md:text-base transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white hover:shadow-lg hover:shadow-amber-500/30"
+                  onClick={() => submit(delivery ? 'delivery' : 'pickup')}
+                  disabled={pedidosCerrados}
+                >
+                  {delivery ? t.order.confirmDelivery : t.order.confirmPickup}
+                </button>
+              )}
+
+              {pedidosCerrados && (
+                <p className="text-xs text-zinc-400 text-center py-2">
+                  {t.order.ui.closedScheduleShort}
+                </p>
+              )}
+
+              {!hasItems && (
+                <p className="text-xs text-zinc-400 text-center py-4">
+                  {t.order.ui.addProductsForSummary}
+                </p>
+              )}
             </div>
-            <div className="text-sm text-zinc-300">{BUSINESS_ADDR}</div>
-            <div className="h-64 rounded-xl overflow-hidden border border-zinc-800">
-              <iframe
-                src={BUSINESS_IFRAME_SRC}
-                width="100%"
-                height="100%"
-                style={{ border: 0 }}
-                loading="lazy"
-                allowFullScreen
-                referrerPolicy="no-referrer-when-downgrade"
-              />
+          </div>
+        </div>
+
+        {/* Mapa para Pick Up - full width en móvil */}
+        {!delivery && hasItems && (
+          <section className="space-y-3">
+            <div className="bg-black/40 rounded-xl border border-zinc-800 overflow-hidden">
+              <div className="h-80 rounded-t-xl overflow-hidden border-b border-zinc-800">
+                <iframe
+                  src={BUSINESS_IFRAME_SRC}
+                  width="100%"
+                  height="100%"
+                  style={{ border: 0 }}
+                  loading="lazy"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              </div>
+              <div className="p-4 space-y-2">
+                <h3 className="font-bold text-sm text-white">{t.order.ui.pickupHere}</h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">{BUSINESS_ADDR}</p>
+                <p className="text-[10px] text-zinc-500 pt-1">{t.order.ui.openInMaps}</p>
+              </div>
             </div>
           </section>
         )}
-
-        {/* Acciones */}
-        <section className="grid gap-2">
-          {delivery ? (
-            <button
-              className="btn h-14 rounded-full border-zinc-700 bg-zinc-900/80 hover:bg-zinc-800 flex items-center justify-center gap-2 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={() => submit('delivery')}
-              disabled={pedidosCerrados}
-            >
-              <span>🚚</span>
-              <span>Confirmar pedido a domicilio</span>
-            </button>
-          ) : (
-            <button
-              className="btn h-14 rounded-full border border-zinc-700 bg-zinc-900/80 hover:bg-zinc-800 flex items-center justify-center gap-2 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={() => submit('pickup')}
-              disabled={pedidosCerrados}
-            >
-              <span>🛍️</span>
-              <span>Confirmar pedido para recoger</span>
-            </button>
-          )}
-
-          <p className="text-xs text-zinc-400 text-center">{actionHint}</p>
-        </section>
 
         {/* Modal mapa */}
         <MapPicker
@@ -1412,7 +1699,7 @@ export default function OrdenCliente() {
                   cb?.();
                 }}
               >
-                Entendido
+                {t.order.understood}
               </button>
             </div>
           </div>

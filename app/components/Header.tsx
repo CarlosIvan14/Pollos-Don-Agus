@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useMemo } from 'react';
 import { useSession, signOut } from 'next-auth/react';
+import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 
 type Role = 'admin' | 'caja' | 'none';
 
@@ -30,7 +31,10 @@ export default function Header() {
         <span>Pollos Don Agus</span>
       </Link>
 
-      <nav className="flex items-center gap-2">
+      <nav className="flex items-center gap-3">
+        {/* Selector de idioma */}
+        <LanguageSwitcher />
+
         {/* Público: botón Ordenar SI NO hay rol válido */}
         {!isPrivileged && (
           <Link className="btn" href="/orden">

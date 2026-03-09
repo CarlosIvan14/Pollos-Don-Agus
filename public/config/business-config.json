@@ -1,0 +1,48 @@
+{
+  "business": {
+    "name": "Pollos Don Agus",
+    "address": "Ignacio Manuel Altamirano 216, Centro, Puruándiro, Michoacán, 58500",
+    "description": "Pollo y costillas a la leña, preparados al momento para que los disfrutes en casa o en el restaurante.",
+    "shortDescription": "Haz tu pedido fácil y rápido.",
+    "story": "Pollos Don Agus nació como un negocio familiar para domingos en familia, reuniones con amigos y antojos entre semana. Todo se prepara a la leña, con recetas tradicionales y el toque casero que nos distingue.",
+    "tagline": "El sabor de casa, a la leña"
+  },
+  "hours": {
+    "open": "10:00",
+    "close": "22:00",
+    "openingTime": "10:00 AM",
+    "closingTime": "10:00 PM"
+  },
+  "contact": {
+    "phone": "+52 (ejemplo)",
+    "email": "info@pollosdonagus.com"
+  },
+  "delivery": {
+    "fee": 20,
+    "minimumOrder": "1 pollo completo, 1 costillar o 2 medios"
+  },
+  "social": {
+    "facebook": "",
+    "instagram": "",
+    "whatsapp": ""
+  },
+  "colors": {
+    "primary": "#f59e0b",
+    "primaryLight": "#fbbf24",
+    "primaryDark": "#d97706",
+    "accent": "#ef4444",
+    "success": "#10b981",
+    "warning": "#f59e0b",
+    "error": "#ef4444"
+  },
+  "google_maps": {
+    "embed": "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d4610.7957853698435!2d-101.51680462476878!3d20.084492781338945!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x842c51d0174a292f%3A0xd14050e239a505bd!2sCalle%20Ignacio%20Manuel%20Altamirano%20216%2C%20Centro%2C%2058500%20Puru%C3%A1ndiro%2C%20Mich.!5e1!3m2!1ses-419!2smx!4v1755747891144!5m2!1ses-419!2smx"
+  },
+  "features": {
+    "showOnlineOrders": true,
+    "showPickup": true,
+    "showDelivery": true,
+    "showGallery": true,
+    "showStory": true
+  }
+}
